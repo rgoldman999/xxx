@@ -1,0 +1,1 @@
+Open index.html inside this folder. This is the corrected Pets-Give site: correct logo image, no videos, local family/dog hero image, and the unwanted instruction text removed.
