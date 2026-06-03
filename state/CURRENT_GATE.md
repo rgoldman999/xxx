@@ -3,41 +3,37 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Validate the STT path end-to-end by re-processing persona ellis, now that the backend is wired to the live btg-stt bridge. STT-only. No TTS, no face/avatar.
+Validate the STT path end-to-end. BLOCKED upstream of STT: ellis video sources are not retrievable. Rob to choose how to get a readable source in front of STT.
 
-## Done so far (verified)
-- STT bridge btg-stt: READY, /healthz 200, device=cuda, auth_secret_set=True. (RESULTS 22:50Z)
-- Backend wired: stt service url setting present in backend secret store; WS routing to btg-stt /stream confirmed (HTTP 101). (RESULTS 23:04Z)
-- Backend redeployed rev 00023 (build-c706e76b); /api/health 200. (RESULTS 23:04Z)
-- Before-state: ellis 5 video sources all at audio_extracted with errno-111; source_speaker_segments=0.
+## Done / verified
+- STT bridge btg-stt READY (/healthz 200, cuda, auth_secret_set=True).
+- Backend wired + redeployed rev 00023; /api/health 200; WS routing to btg-stt /stream confirmed (HTTP 101).
+- Reprocess of all 5 ellis video sources: all FAILED upstream of STT (FileNotFoundError on source file). See RESULTS 23:12Z.
 
-## Next step — ROB-ONLY trigger, then AUTO-RUN verify
-1. (ROB-ONLY) Rob triggers reprocess for each video source, authed as himself. Reason it is ROB-ONLY: the endpoint mutates prod DB (resets the source row) and requires owner auth (request made as Rob). Executor will NOT call it.
-   - endpoint: POST {backend_base}/api/upload/_reprocess/{source_id}
-   - backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
-   - video source_ids:
-     - 1154ccfa-1bb4-4a2a-8e27-62bc3665eb95
-     - 368930f7-fdf0-411b-93ee-76a6141c78b9
-     - 7fa2e508-aea4-4ecf-ad1d-abe19eddd3e6
-     - d9caf45c-81bb-4630-a92d-febf527938a9
-     - f149bd58-a66f-462f-a51c-10fe50614783
-2. (AUTO-RUN) After Rob triggers, executor verifies read-only:
-   - persona_sources video rows advance audio_extracted -> transcribed (or processing_status complete).
-   - source_speaker_segments for ellis becomes greater than zero.
-   - btg-stt bridge logs show transcription WS requests landing.
-   - If a row errors again, capture the exact error (the STT path then needs diagnosis, NOT blind retry).
-3. (AUTO-RUN) Write RESULTS + update this gate with outcome.
+## NEW BLOCKER (this is why STT is still unvalidated)
+- The 5 ellis video sources have storage_uri = file:///opt/backtogether/uploads/... (local disk, prior deployment), NOT r2://.
+- Current backend container has no local copy; ostore can't fetch a file:// URI from R2; processing.py:156 raises FileNotFoundError before audio extraction / STT.
+- STT bridge logs show no transcription requests (pipeline died upstream). STT wiring is NOT disproven, just not yet exercised.
+- Retrying reprocess will fail identically — NOT a retry case.
 
-## After this gate (per standing priority rule; do NOT start without reaching the boundary)
-- If reprocess validates: next product-critical step is TTS bridge bring-up (yields voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval at that point.
+## Next step — Rob chooses ONE (then executor verifies read-only)
+- A. Re-upload the 5 ellis videos (fresh upload -> R2 with r2:// uri) -> reprocess -> verify. Clean path to exercise STT on the real persona.
+- B. Backfill: check if original local files survive on any persistent volume and can be pushed to R2 (uncertain; container disks may be gone).
+- C. Smallest validation: new test persona + one fresh small video upload -> reprocess -> verify STT end-to-end, independent of the orphaned ellis sources.
+Recommendation (per standing rule 2, smallest validating step): C, then revisit ellis re-upload (A) for real persona data.
+NOTE: uploads/re-uploads are ROB-ONLY (auth + prod data + object storage). Executor verifies read-only after.
+
+## After STT validates
+- TTS bridge bring-up (voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval.
 
 ## ROB-ONLY (carried)
+- Source upload/re-upload (auth as Rob, prod data, R2 writes).
 - Reprocess trigger (prod DB mutation + auth as Rob).
 - TTS/face GPU deploy = new paid infra.
 - No secret values set by executor.
 
 ## Hard constraints
-No prod DB writes by executor. No calls placed/ended by executor. No backend redeploy without confirm-before-live. No TTS/face this gate.
+No prod DB writes / uploads by executor. No calls placed/ended by executor. No backend redeploy without confirm-before-live. No blind retry. No TTS/face this gate.
 
 ---
 
