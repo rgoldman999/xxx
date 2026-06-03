@@ -1,5 +1,7 @@
 # CURRENT GATE
 
+> Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
+
 ## Objective
 Gap #1 D-2 internal Qwen routing verification — CLOSED (with formatter caveat). Pick the next gate.
 
