@@ -1,50 +1,55 @@
 # NEXT REPLY
 
-status: CONSUMED
-updated_at: 2026-06-03T23:55:00Z
-consumed_at: 2026-06-03T23:26:28Z
-consumed_by: claude-executor
-gate_commit: 7e58d32
-classification_hint: ROB-ONLY R2 credentials missing; read-only discovery allowed
+status: PENDING
+updated_at: 2026-06-04T00:05:00Z
+consumed_at:
+consumed_by:
+gate_commit: cbf1aeb46cf5fc405d6fdfc0e867ba3cd8da5a53
+classification_hint: ROB-ONLY set R2 secret values with corrected Cerebrium CLI syntax
 
 ## body
-Rob reports: no R2 secrets are available/present. Treat R2 as a credentials/setup blocker, not a deploy blocker.
+Rob hit a Cerebrium CLI syntax error: `invalid format: "r2_enabled". Expected KEY=VALUE`. The correct CLI form for this version is a single KEY=VALUE argument after `secrets add`.
 
-Current verified state:
-- STT bridge is healthy.
-- Backend is wired to STT.
-- STT validation is blocked because existing uploads are file:// local paths that disappeared after redeploy.
-- Backend R2 config is missing, so new uploads would still fall back to local disk.
+Rob-only correction: run the commands locally with real values, never pasting values into chat.
 
-Next action for executor:
-1. Do READ-ONLY discovery only. Do not set secrets and do not deploy.
-2. Inspect local repo/config/docs for R2 setup references and exact expected env names.
-3. Check whether any existing local credential files are referenced by project docs, but do not print secret values.
-4. Produce exact Rob-only steps for creating or locating Cloudflare R2 credentials:
-   - bucket name
-   - account-specific R2 endpoint
-   - access key ID
-   - secret access key
-   - r2_enabled=true
-5. Produce exact Cerebrium commands using placeholders only, never real values.
-6. Update RESULTS.md and CURRENT_GATE.md with the R2 credentials/setup blocker and the Rob-only next step.
-7. Stop.
+Correct pattern:
 
-Rob-only work:
-- Create or locate the R2 bucket and credentials in Cloudflare or local credential manager.
-- Set the five backend config names in Cerebrium without pasting values into chat.
+R2_ENDPOINT='https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
+R2_ACCESS_KEY='YOUR_ACCESS_KEY_ID'
+R2_SECRET_KEY='YOUR_SECRET_ACCESS_KEY'
+R2_BUCKET='YOUR_BUCKET_NAME'
 
-Required backend config names remain:
-- r2_enabled=true
+~/Library/Python/3.13/bin/cerebrium secrets add r2_enabled=true
+~/Library/Python/3.13/bin/cerebrium secrets add r2_endpoint="$R2_ENDPOINT"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_access_key="$R2_ACCESS_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_secret_key="$R2_SECRET_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_bucket="$R2_BUCKET"
+
+Verify names only:
+
+~/Library/Python/3.13/bin/cerebrium secrets list | grep -i r2_
+
+Expected names:
+- r2_enabled
 - r2_endpoint
 - r2_access_key
 - r2_secret_key
 - r2_bucket
 
+If `secrets add` says a key already exists, Rob should report only the error text and no secret values; then executor can provide the correct update/delete+add path for this CLI.
+
+After Rob confirms all five R2 names are present, executor proceeds from CURRENT_GATE:
+- re-verify names only
+- confirm-before-live backend redeploy
+- backend /api/health smoke
+- verify R2 active read-only if possible
+- update RESULTS.md and CURRENT_GATE.md
+- stop before upload/reprocess
+
 Hard constraints:
-- do not paste or print secret values
-- executor does not create credentials unless Rob explicitly handles dashboard/manual credential work
-- no backend redeploy until R2 names are confirmed present
+- no secret values in chat or repo
+- executor does not set secret values
+- no backend redeploy until five r2_ names are confirmed present
 - no upload/re-upload until R2 is enabled and backend redeployed
 - no blind retry of old file:// Ellis sources
 - no TTS or face/avatar in this gate
