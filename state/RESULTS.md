@@ -110,3 +110,36 @@ LIKELY CAUSES (Rob to disambiguate; not guessed-and-proceeded):
 DID NOT: redeploy, set secrets, upload, retry. Precondition (5 R2 names present) NOT met, so the gate's step 1 is not satisfied.
 
 NEXT (ROB-ONLY): Rob re-checks where/how the R2 secrets were set; confirm via `cerebrium secrets list` (his side) shows the five r2_ names in project p-a907d7c5. If his CLI shows them but this one does not, the two CLIs target different projects — fix that. Once the five names appear in `cerebrium secrets list` for p-a907d7c5, executor proceeds: confirm-before-live redeploy -> /api/health -> verify R2 active (read-only) -> docs -> stop.
+
+## 2026-06-03T23:24:44Z — R2 read-only discovery: creds exist but endpoint flagged malformed; backend reads lowercase env from .env / project secrets
+Followed NEXT_REPLY (AUTO-RUN read-only discovery). Key findings reframe the blocker: R2 creds likely EXIST but the endpoint was recorded malformed, and the stack doc claims R2 live while verified behavior says disabled. Executor did NOT read secret values, set secrets, or deploy.
+
+EXACT BACKEND CONFIG NAMES (config.py:93-97, lowercase, no env_prefix):
+- r2_endpoint
+- r2_access_key
+- r2_secret_key
+- r2_bucket
+- r2_enabled (bool; set true)
+Env mapping: config.py:125-126 -> class Config env_file=/opt/backtogether/.env. Pydantic reads env (Cerebrium injects secrets as env). Field names are LOWERCASE; if secrets were set UPPERCASE (R2_ENDPOINT...), confirm pydantic case handling — safest is to set names exactly as the lowercase field names.
+
+DISCOVERY (read-only, no values printed):
+- STATE.md:199 — ~/btg-state/creds.env contains R2 keys (assembled 2026-05-06, mode 600). So R2 creds were captured previously; "no R2 secrets available" may mean not-in-Cerebrium, not non-existent.
+- STATE.md:436 — "R2_ENDPOINT in creds.env malformed — not addressed this session." LIKELY ROOT CAUSE: the stored R2 endpoint is malformed; R2 would fail/stay disabled even if set. Needs correction.
+- STATE.md:43 / TURNOVER.md:49 — stack docs claim "R2 live", but today's verification shows R2 NOT enabled in backend (no r2_ secrets present). Doc-intent vs verified-behavior mismatch.
+- STATE.md:435 — note of 8 R2 source blobs (~8.6GB) referenced previously (suggests R2 was used at some point).
+
+REFRAME: This is not "generate new R2 creds from scratch." It is: (a) locate existing R2 creds in creds.env, (b) FIX the malformed r2_endpoint, (c) set the five lowercase names into the backend's Cerebrium project secrets (p-a907d7c5), (d) redeploy. Generating random values would be harmful (non-empty -> _r2_enabled True but auth fails).
+
+ROB-ONLY NEXT STEPS:
+1. Locate R2 creds: Cloudflare dashboard R2 -> bucket name + account R2 endpoint (https://<accountid>.r2.cloudflarestorage.com) + an R2 API token (access key id + secret access key). Or recover from ~/btg-state/creds.env, FIXING the malformed endpoint.
+2. Set the five names in Cerebrium project p-a907d7c5 (values never in chat). Use the CLI form that worked earlier:
+   cerebrium secret set r2_enabled "true"
+   cerebrium secret set r2_endpoint "<endpoint>"
+   cerebrium secret set r2_access_key "<id>"
+   cerebrium secret set r2_secret_key "<secret>"
+   cerebrium secret set r2_bucket "<bucket>"
+   (If "secret set" errors on this CLI version, report the exact error; do not paste values.)
+3. Verify names only: cerebrium secrets list | grep -i r2_
+4. Confirm to executor (name-only). Then executor: confirm-before-live redeploy -> /api/health -> verify R2 active read-only -> docs -> stop before upload/reprocess.
+
+NOT done: no values read/printed, no secrets set, no deploy, no upload, no retry. STT still unvalidated.
