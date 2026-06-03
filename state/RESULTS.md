@@ -66,3 +66,31 @@ NEXT (decision for Rob — options, NOT yet chosen):
 NOTE: uploads / re-uploads are Rob actions (auth + prod data). Executor will verify read-only after.
 
 NOT done: STT end-to-end still unvalidated; no TTS; no face/avatar. No retry performed.
+
+## 2026-06-03T23:15:49Z — Option A blocked: R2 not configured in backend — uploads fall back to file:// (root cause of unretrievable sources)
+Chose option A (re-upload ellis videos). Pre-flight read-only check found A will FAIL the same way until R2 object storage is configured. STOPPED before any upload.
+
+ROOT CAUSE (traced to source, read-only):
+- object_store.py:12 — writes go to R2 only if R2_ENABLED; otherwise fall back to file:// local disk.
+- _r2_enabled() (object_store.py:36-38) requires ALL of: r2_enabled, r2_endpoint, r2_access_key, r2_secret_key, r2_bucket.
+- config.py:93-97 defaults: r2_enabled=False; r2_endpoint/access_key/secret_key/bucket all empty.
+- Backend Cerebrium secrets (names only) contain NONE of the R2 vars (no R2_* / bucket entries among the 20 secrets).
+- => _r2_enabled() is False in the deployed backend. Every upload falls back to file:// local disk.
+
+IMPLICATION:
+- This is WHY the original ellis sources are file:// and unretrievable after redeploy — R2 was never enabled.
+- A re-upload (option A) would produce another file:// URI on the fresh container and fail identically after any redeploy. Option A cannot work until R2 is configured.
+- This is a storage-layer prerequisite, not an STT problem. Per stack docs R2 is the intended object store (process-and-delete, r2:// URIs); it is currently unconfigured.
+
+NEW REQUIRED PREREQUISITE (ROB-ONLY): configure R2 on the backend before any upload-based STT validation:
+- Set backend secrets: R2 endpoint, access key, secret key, bucket, and r2_enabled=true (exact env names per config.py: r2_endpoint/r2_access_key/r2_secret_key/r2_bucket/r2_enabled). Secret VALUES = Rob (never via chat). Per memory, R2 bucket + creds exist in Rob's creds files.
+- Then backend redeploy to pick them up (confirm-before-live), and verify _r2_enabled via an upload that yields an r2:// storage_uri.
+
+REVISED PATH:
+1. (ROB-ONLY) Rob sets R2 backend secrets + r2_enabled=true.
+2. (CHECKPOINT) backend redeploy (confirm-before-live).
+3. (verify) read-only: confirm a fresh small upload yields storage_uri starting r2:// (not file://).
+4. (ROB-ONLY) re-upload ellis videos (or a test persona video) -> reprocess.
+5. (AUTO-RUN verify) sources advance past audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream requests.
+
+NOT done: no upload performed, no R2 secrets set, no redeploy, no retry. STT still unvalidated end-to-end. No TTS/face.
