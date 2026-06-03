@@ -3,34 +3,40 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-STT bridge bring-up = DONE (deployed + smoke-verified). Awaiting Rob's choice of next gate.
+Option 1 — wire the backend to the live btg-stt bridge, redeploy backend, re-process persona ellis to validate the STT path end-to-end. (STT bridge itself = DONE/verified.) No TTS, no face/avatar.
 
-## STT result — COMPLETE (verified)
-- App p-a907d7c5-btg-stt READY; build build-c308b402.
-- Endpoint base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/btg-stt
-- /healthz: HTTP 200, ready=true, stt.ready=true, model=deepdml/faster-whisper-large-v3-turbo-ct2, device=cuda, compute_type=int8_float16; auth_secret_set=True (startup log).
-- ADA_L4, scale-to-zero (min0/max1) confirmed (cold-start on first hit, then 200). Spend within $100.
-- See RESULTS.md 2026-06-03T22:50Z for full detail.
+## Verified inputs (read-only, 2026-06-03)
+- STT endpoint base (live, healthz returns 200): the btg-stt app https base at api.aws.us-east-1.cerebrium.ai under v4 / p-a907d7c5 / btg-stt.
+- Backend reads its stt service url setting (config.py line 61); client stt_bridge.py _ws_url_from converts an https base into a wss host /stream URL with the bridge auth query appended.
+- WS ROUTING CONFIRMED: a handshake to the btg-stt /stream path returned HTTP 101 Switching Protocols (Cerebrium/envoy routes WebSocket to the bridge on 8003 /stream). The constructed wss URL will reach the bridge.
+- Backend secret store: the bridge auth shared value is present (project-scoped, shared with the bridge). The stt service url setting is NOT yet present.
 
-## NOT done (each a later, separately-approved gate)
-- Backend STT_SERVICE_URL wiring (would change backend behavior → its own gate).
-- TTS bridge bring-up (needed for voice_id / callable persona).
-- Face/avatar bridge (avatar mode only).
+## Required setting
+- The backend stt service url setting must be set to the btg-stt https base (the client appends /stream and upgrades to wss). ROB-ONLY: Rob sets this value in the secret store. It is a plain URL, not a credential, but per rule 5 it is a secret-store value Rob provides and it changes prod behavior.
+- Bridge auth shared value: already present on backend + bridge. No action.
 
-## Next gate — Rob chooses ONE
-1. Wire backend STT_SERVICE_URL to the btg-stt endpoint + re-process persona (CHECKPOINT/ROB-ONLY: changes backend, new secret value STT_SERVICE_URL, backend redeploy).
-2. TTS bridge bring-up (mirror the STT path: artifacts → secret already set project-scoped → deploy → smoke). New paid GPU infra → ROB-ONLY spend approval.
-3. Hold / stop session.
+## Plan
+1. (ROB-ONLY) Rob sets the backend stt service url setting to the btg-stt https base, via CLI or dashboard. Confirm present name-only.
+2. (CHECKPOINT / confirm-before-live) Redeploy backend to pick up the new setting. Backend is the user-facing prod service, so its redeploy is confirm-before-live, not auto.
+   - target: project p-a907d7c5, app backtogether-backend, us-east-1
+   - command: from repo root, cerebrium deploy against backend/cerebrium.toml (confirm exact path at deploy)
+   - smoke: backend health returns 200; then re-process persona ellis and confirm the STT stage advances past the prior errno-111 connection-refused.
+   - rollback: previous backend revision remains available; redeploy prior build on regression. Backend has live users, so stop on any health regression.
+3. (AUTO-RUN) Re-process persona ellis (c40776dd): trigger source reprocess; verify persona_sources video rows advance from audio_extracted to transcribed and that source_speaker_segments becomes greater than zero. Read-only DB verification of stage progression.
+4. (AUTO-RUN) Update gate + RESULTS.
 
-## ROB-ONLY (carried)
-- Any backend STT_SERVICE_URL set = secret value + changes prod behavior → ROB-ONLY.
-- TTS/face GPU deploy = new paid infra → ROB-ONLY spend approval.
-- BRIDGE_AUTH_SECRET already set project-scoped (covers future bridges).
+## ROB-ONLY stops (per standing rule 5)
+- Setting the backend stt service url value (secret-store value Rob provides).
+- Backend redeploy changes prod behavior for all users -> confirm-before-live.
+Everything else (verify endpoint, plan, reprocess trigger if non-secret, DB read, handoff docs) = AUTO-RUN.
 
-## Hard constraints (unchanged)
-No backend deploy/wiring without explicit approval. No env/secret values set by executor. No prod DB writes. No calls placed/ended by executor.
+## NOT this gate
+TTS bridge, face/avatar, any new GPU infra.
+
+## Hard constraints
+No backend deploy without Rob confirm-before-live. No secret values set by executor. No prod DB writes beyond an approved reprocess. No calls placed/ended by executor.
 
 ---
 
 ## STANDING SECURITY (ROB-ONLY, not done)
-Rotate CF Global API Key (uploaded to chat, full-account scope). Clear broad-scope wrangler OAuth session on Mac. Active test call e1f9cdd4... still status=active (end user-run).
+Rotate CF Global API Key (uploaded to chat, full-account scope). Clear wrangler OAuth session. Active call e1f9cdd4 still active (end user-run).
