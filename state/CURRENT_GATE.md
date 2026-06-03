@@ -3,45 +3,43 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Enable R2 on the backend so uploads persist (r2://), as prerequisite to STT validation. HALTED: the five R2 secrets are reported set by Rob but are NOT present in the Cerebrium secret store the backend reads. Resolve the secret-store discrepancy before redeploy.
+Enable R2 on the backend (prerequisite to STT validation). Read-only discovery done. Reframed: R2 creds likely EXIST in creds.env but the stored endpoint was flagged malformed and the creds are not in the backend secret store. Rob to locate/fix/set; executor does NOT touch values.
 
-## HALT — precondition not met (RESULTS 23:20Z)
-- `cerebrium secrets list` (the CLI used all session, project p-a907d7c5) shows 20 secrets, none of r2_enabled/r2_endpoint/r2_access_key/r2_secret_key/r2_bucket. Count unchanged.
-- Did NOT redeploy: with R2 absent, _r2_enabled() is still False; a redeploy would change nothing and waste a confirm-before-live cycle.
-
-## Done / verified (unchanged)
+## Done / verified
 - STT bridge btg-stt READY (/healthz 200). Backend rev 00023 wired, /api/health 200, WS routing to /stream confirmed (101).
-- Ellis 5 video sources are file:// and unretrievable; failed upstream of STT. R2 is the prerequisite to fix this.
+- Ellis 5 video sources file:// and unretrievable (failed upstream of STT).
+- R2 NOT enabled in backend (cerebrium secrets list: no r2_ names).
 
-## Next step — ROB-ONLY: resolve where the R2 secrets actually went
-1. (Rob) Re-check how/where the five R2 names were set:
-   - Was it CLI or dashboard? If CLI, exact command + did it return success or error? (Earlier `cerebrium secret set NAME VALUE` worked; `secrets add name="value"` may be a version mismatch.)
-   - Dashboard: "Project Secrets" vs an app "Secrets" tab — backend reads Cerebrium PROJECT secrets for p-a907d7c5.
-   - Is Rob's CLI pointed at the same project as the executor's? Rob's `cerebrium secrets list` should match the 20 the executor sees; if Rob sees the r2_ names and executor does not, the two target different projects.
-   - Confirm names locally without values: `cerebrium secrets list | grep -iE 'r2_'`.
-2. Once the five r2_ names appear in `cerebrium secrets list` for p-a907d7c5 (executor re-verifies name-only), proceed:
-   - (CHECKPOINT/confirm-before-live) backend redeploy (deploy spec in gate/policy).
-   - (AUTO-RUN) /api/health smoke.
-   - (AUTO-RUN, read-only) verify R2 active WITHOUT executor upload — see method note below.
-   - (AUTO-RUN) RESULTS + gate update. Stop at next ROB-ONLY (the actual upload/reprocess).
+## Discovery (read-only, RESULTS 23:24Z; no values printed)
+- Exact backend config names (config.py:93-97, LOWERCASE, no env_prefix): r2_endpoint, r2_access_key, r2_secret_key, r2_bucket, r2_enabled(bool true).
+- Env source: config.py:125-126 env_file=/opt/backtogether/.env; Cerebrium injects secrets as env. Set names exactly as lowercase field names (avoid case mismatch).
+- STATE.md:199 — ~/btg-state/creds.env contains R2 keys (so creds were captured before).
+- STATE.md:436 — "R2_ENDPOINT in creds.env malformed — not addressed." LIKELY ROOT CAUSE: malformed endpoint; R2 fails/stays disabled.
+- STATE.md:43 / TURNOVER.md:49 claim "R2 live" — contradicts verified state (disabled). Doc vs behavior mismatch.
 
-## R2-active verification method (no executor upload)
-Options to confirm R2 is live without the executor performing an upload:
-- Read the backend's own /api/health or a debug/status route if it reports r2_enabled (check routes read-only).
-- Inspect upload._RECENT_UPLOAD_EVENTS / a status endpoint that exposes storage_uri scheme of the next Rob-performed upload.
-- Simplest: Rob does ONE small fresh upload (ROB-ONLY) and executor reads the resulting storage_uri scheme (r2:// vs file://) read-only. (Upload stays Rob's action.)
+## Rob-only next steps
+1. Locate R2 creds: Cloudflare dashboard R2 -> bucket name + account endpoint (https://<accountid>.r2.cloudflarestorage.com) + R2 API token (access key id + secret). OR recover from ~/btg-state/creds.env, FIXING the malformed endpoint. Do NOT paste values in chat.
+2. Set the five lowercase names in Cerebrium project p-a907d7c5 (CLI form that worked earlier):
+   cerebrium secret set r2_enabled "true"
+   cerebrium secret set r2_endpoint "<endpoint>"
+   cerebrium secret set r2_access_key "<id>"
+   cerebrium secret set r2_secret_key "<secret>"
+   cerebrium secret set r2_bucket "<bucket>"
+   (If "secret set" errors on this CLI version, report the exact error; do not paste values.)
+3. Verify names only: cerebrium secrets list | grep -i r2_  (executor re-verifies name-only).
+4. Confirm to executor. Then executor proceeds: confirm-before-live redeploy -> /api/health -> verify R2 active read-only (no executor upload) -> docs -> STOP before upload/reprocess.
 
-## After R2 verified + a durable source exists
-- Re-upload ellis video (or test persona) [ROB-ONLY] -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
-- Then TTS bridge (ROB-ONLY spend).
+## DO NOT generate random secret values
+Random/placeholder values make _r2_enabled True but R2 auth FAILS (worse than disabled). Use real Cloudflare R2 creds only.
+
+## After R2 verified
+- Re-upload ellis video or test persona [ROB-ONLY] -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs). Then TTS (ROB-ONLY spend).
 
 ## ROB-ONLY (carried)
-- R2 secret values + correct store/project.
-- Upload/re-upload; reprocess trigger; backend redeploy (confirm-before-live); TTS/face GPU.
-- No secret values set by executor.
+- Locate/fix/set R2 creds (values, dashboard/CLI). Upload/reprocess. Backend redeploy (confirm-before-live). TTS/face GPU. No secret values set by executor.
 
 ## Hard constraints
-No secret values set by executor. No prod DB writes/uploads by executor. No backend redeploy without confirm-before-live AND precondition met. No blind retry of file:// ellis sources. No TTS/face.
+No secret values set/read/printed by executor. No prod DB writes/uploads by executor. No redeploy until 5 r2_ names confirmed present AND confirm-before-live. No random secret generation. No blind retry of file:// sources. No TTS/face.
 
 ---
 
