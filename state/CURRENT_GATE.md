@@ -3,41 +3,55 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Build the local handoff COORDINATOR (Phase 1, CLI-only) for the xxx repo. Advise-not-authorize model: the coordinator reads/classifies/records and commits handoff-doc changes; it NEVER authorizes or performs production-mutating actions. (Bridge-tier bring-up — Gate "STT" — is PAUSED behind a ROB-ONLY item; see below.)
+STT bridge bring-up — stand up the STT bridge as a direct Cerebrium GPU app (faster-whisper large-v3-turbo + silero VAD) and smoke-test it in isolation. STT ONLY. (Coordinator Phase 1 = DONE, commit 256cbd9. TTS / face-avatar = NOT this gate.)
 
-## Coordinator-build gate (Phase 1, accepted 2026-06-03)
-Build CLI-only; no MCP wrapper, no daemon/watcher, no UI automation.
+## ROB-ONLY items (explicit — never auto, never gate-file-authorized)
+- Rob sets BRIDGE_AUTH_SECRET himself (openssl rand -hex 32 → cerebrium secret set / dashboard). Value NEVER in chat. Project-scoped (p-a907d7c5) covers STT app + backend.
+- Rob confirms the STT config (L4 / scale-to-zero) before deploy.
+- Confirm-before-live at the moment of deploy (first paid GPU infra).
+- Rob accepts the bounded STT GPU spend (≤ $100, scale-to-zero).
 
-### Deliverables
-- tools/handoff.py — stdlib-only CLI: get-gate, get-next-reply, classify, write-result, update-gate, mark-consumed
-- tools/README.md — run + safety model
-- state/NEXT_REPLY.md — template if absent
-- state/RESULTS.md — template if absent
+## AUTO-RUN allowed this gate
+- commit held STT deploy artifacts (ops/cerebrium/stt/cerebrium.toml) to backtogether
+- inspect STT config + bridge source files (read-only pre-flight)
+- prepare exact secret-setting instructions (no values exposed)
+- prepare deploy command / smoke / rollback (recorded below)
+- update handoff docs (CURRENT_GATE.md / RESULTS.md) and commit/push
 
-### Hard properties (enforced in code)
-- repo jail: only ~/Projects/xxx, branch main
-- path jail: reads/writes only state/*.md
-- commit jail: may stage ONLY state/*.md, tools/handoff.py, tools/README.md
-- git pull --ff-only before reads/writes
-- writes DRY by default; --commit required for write-result / update-gate / mark-consumed
-- classify_action is ADVISORY only — returns AUTO-RUN/CHECKPOINT/ROB-ONLY + verdict (PROCEED-ADVISORY|STOP); never authorization
-- ROB-ONLY -> STOP
-- redact obvious token/key/secret patterns on read; refuse to commit likely secrets
-- NO deploy / secrets / DB / calls / app-repo commands — those code paths do not exist in the tool
+## DO NOT (this gate)
+- Do NOT deploy yet (wait: secret confirmed present + Rob's confirm-before-live).
+- Do NOT set secret values.
+- Do NOT start GPU spend yet.
+- Do NOT start TTS or face/avatar.
+- Do NOT change backend STT_SERVICE_URL.
+- Do NOT deploy backend.
+- Do NOT retry persona processing.
+- No new paid infra beyond the single STT app.
 
-### Classification of this gate's work
-AUTO-RUN — building handoff tooling + docs in the xxx repo, committing tools/handoff.py + tools/README.md + state/*.md. No production surface.
+## STT deploy spec (for the gated deploy, once secret confirmed + Rob OK)
+- target: Cerebrium project p-a907d7c5, app name `btg-stt`, region us-east-1
+- scope: single GPU app from ops/cerebrium/stt/cerebrium.toml — STT bridge only; no backend change, no other app
+- command: `cd ~/Projects/backtogether/ops/cerebrium/stt && cerebrium deploy --config-file ./cerebrium.toml`
+- config: compute ADA_L4, gpu_count 1, min_replicas 0 (scale-to-zero), max_replicas 1, port 8003, healthcheck /healthz, base nvidia/cuda:12.4.1-cudnn-runtime, apt ffmpeg
+- smoke: after "live", GET <app https base>/healthz → expect 200 with ready=true (whisper+vad loaded) and (from startup log) auth_secret_set=true
+- rollback / stop condition: if build fails OR /healthz not ready OR auth_secret_set=false OR spend behavior unclear → STOP, do not wire backend, do not retry blindly; capture exact error; scale-to-zero means idle cost ≈ 0 while diagnosing. App can be deleted (`cerebrium apps delete btg-stt`) to halt entirely — that deletion is reversible re-deploy, no prod data involved.
+- precondition: BRIDGE_AUTH_SECRET present (name-only confirm via `cerebrium secrets list`) BEFORE deploy.
 
-## PAUSED — STT bridge bring-up (ROB-ONLY, awaiting Rob)
-Drafted (held, not committed to backtogether): ops/cerebrium/stt/cerebrium.toml (ADA_L4, scale-to-zero min_replicas=0/max_replicas=1, port 8003, /healthz, cuDNN base, ffmpeg). Spend priced: L4 ~$0.80/hr active; scale-to-zero keeps under the $100 ceiling Rob approved. REMAINING ROB-ONLY before deploy: (1) Rob sets BRIDGE_AUTH_SECRET on btg-stt app + backend (value never via chat); (2) Rob confirms config; (3) deploy is confirm-before-live. Resume after coordinator Phase 1.
+## Next-step sequence
+1. (Rob) set BRIDGE_AUTH_SECRET; confirm present (name-only).
+2. (AUTO-RUN) read-only pre-flight: confirm ops/cerebrium/stt include paths exist + bridge imports resolve.
+3. (AUTO-RUN) commit ops/cerebrium/stt artifacts to backtogether (show diff in report).
+4. (CHECKPOINT) confirm-before-live → deploy btg-stt → smoke /healthz → report endpoint+status.
+5. (AUTO-RUN) update CURRENT_GATE.md + RESULTS.md; commit handoff docs.
+STOP after STT smoke. Backend wiring (STT_SERVICE_URL) + TTS are later, separate gates.
 
 ## Hard constraints (unchanged)
-No deploy. No app-repo code changes without show-diff-hold. No env/secret changes. No prod DB writes. No calls placed/ended by executor. Coordinator commits handoff-doc + its own tool files only.
+No backend deploy. No env/secret values set by executor. No prod DB writes. No calls placed/ended by executor. App-repo commits show-diff in report.
 
 ---
 
-## D-2 ARCHIVE — CLOSED (verified with formatter caveat)
-Direct API/WS test by USER 2026-06-03. call_id e1f9cdd4-6abc-4469-81b7-4d69637fc6fa; first prod calls row for c447365d… (persona c40776dd, audio); llm_provider_route_decision EMITTED (call.py:582). basicConfig drops extra={} so literal override=qwen not in log text; verified via chain (row user_id=c4473 + resolver returns qwen + 0 non-allowlisted). Active call e1f9cdd4… status=active to be ended (user-run).
+## D-2 ARCHIVE — CLOSED (verified w/ formatter caveat)
+call_id e1f9cdd4-6abc-4469-81b7-4d69637fc6fa; first prod calls row for c447365d…; llm_provider_route_decision EMITTED (call.py:582); basicConfig drops extra={} so literal override=qwen not greppable; verified via chain (row+resolver+0 non-allowlisted). Active call e1f9cdd4… status=active to be ended (user-run).
 
 ## STANDING SECURITY (ROB-ONLY, not done)
 Rotate CF Global API Key (uploaded to chat, full-account scope). Clear broad-scope wrangler OAuth session on Mac.
