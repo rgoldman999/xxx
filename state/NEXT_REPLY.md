@@ -1,10 +1,10 @@
 # NEXT REPLY
 
-status: PENDING
+status: CONSUMED
 updated_at: 2026-06-03T23:55:00Z
-consumed_at:
-consumed_by:
-gate_commit: 8cda5e331eeb95278e37f641011c82a8056487c6
+consumed_at: 2026-06-03T23:26:28Z
+consumed_by: claude-executor
+gate_commit: 7e58d32
 classification_hint: ROB-ONLY R2 credentials missing; read-only discovery allowed
 
 ## body
