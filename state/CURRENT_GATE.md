@@ -3,40 +3,45 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Validate STT end-to-end. Blocked by a storage-layer prerequisite: R2 object storage is NOT configured in the backend, so uploads fall back to file:// local disk and do not survive redeploys. R2 must be enabled before any upload-based STT validation.
+Enable R2 on the backend so uploads persist (r2://), as prerequisite to STT validation. HALTED: the five R2 secrets are reported set by Rob but are NOT present in the Cerebrium secret store the backend reads. Resolve the secret-store discrepancy before redeploy.
 
-## Done / verified
-- STT bridge btg-stt READY (/healthz 200, cuda, auth_secret_set=True).
-- Backend wired + rev 00023; /api/health 200; WS routing to btg-stt /stream confirmed (HTTP 101).
-- Reprocess of 5 ellis videos FAILED upstream of STT (FileNotFoundError); sources are file:// local, gone from fresh container.
-- Pre-flight for option A found the deeper cause: R2 not enabled (see below).
+## HALT — precondition not met (RESULTS 23:20Z)
+- `cerebrium secrets list` (the CLI used all session, project p-a907d7c5) shows 20 secrets, none of r2_enabled/r2_endpoint/r2_access_key/r2_secret_key/r2_bucket. Count unchanged.
+- Did NOT redeploy: with R2 absent, _r2_enabled() is still False; a redeploy would change nothing and waste a confirm-before-live cycle.
 
-## ROOT BLOCKER — R2 not configured (RESULTS 23:15Z)
-- object_store.py: writes go to R2 only if R2_ENABLED, else file:// fallback.
-- _r2_enabled requires r2_enabled + r2_endpoint + r2_access_key + r2_secret_key + r2_bucket.
-- config.py defaults: r2_enabled=False, R2 fields empty. Backend secrets contain NO R2 vars.
-- => uploads currently land on ephemeral local disk (file://), lost on redeploy. This is why the ellis sources are unretrievable. Re-uploading without R2 repeats the failure.
+## Done / verified (unchanged)
+- STT bridge btg-stt READY (/healthz 200). Backend rev 00023 wired, /api/health 200, WS routing to /stream confirmed (101).
+- Ellis 5 video sources are file:// and unretrievable; failed upstream of STT. R2 is the prerequisite to fix this.
 
-## Revised path (R2 prerequisite first)
-1. (ROB-ONLY) Rob sets backend R2 secrets + enables R2: env names per config.py — r2_endpoint, r2_access_key, r2_secret_key, r2_bucket, r2_enabled=true. Secret VALUES = Rob (never via chat). Per memory, R2 bucket + creds exist in Rob's creds files.
-2. (CHECKPOINT / confirm-before-live) backend redeploy to pick up R2 config.
-3. (AUTO-RUN verify) read-only: a fresh small upload yields storage_uri starting r2:// (not file://). Confirms R2 active.
-4. (ROB-ONLY) re-upload ellis videos (or a test persona video) -> reprocess.
-5. (AUTO-RUN verify) sources advance audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream requests.
+## Next step — ROB-ONLY: resolve where the R2 secrets actually went
+1. (Rob) Re-check how/where the five R2 names were set:
+   - Was it CLI or dashboard? If CLI, exact command + did it return success or error? (Earlier `cerebrium secret set NAME VALUE` worked; `secrets add name="value"` may be a version mismatch.)
+   - Dashboard: "Project Secrets" vs an app "Secrets" tab — backend reads Cerebrium PROJECT secrets for p-a907d7c5.
+   - Is Rob's CLI pointed at the same project as the executor's? Rob's `cerebrium secrets list` should match the 20 the executor sees; if Rob sees the r2_ names and executor does not, the two target different projects.
+   - Confirm names locally without values: `cerebrium secrets list | grep -iE 'r2_'`.
+2. Once the five r2_ names appear in `cerebrium secrets list` for p-a907d7c5 (executor re-verifies name-only), proceed:
+   - (CHECKPOINT/confirm-before-live) backend redeploy (deploy spec in gate/policy).
+   - (AUTO-RUN) /api/health smoke.
+   - (AUTO-RUN, read-only) verify R2 active WITHOUT executor upload — see method note below.
+   - (AUTO-RUN) RESULTS + gate update. Stop at next ROB-ONLY (the actual upload/reprocess).
 
-## After STT validates
-- TTS bridge bring-up (voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval.
+## R2-active verification method (no executor upload)
+Options to confirm R2 is live without the executor performing an upload:
+- Read the backend's own /api/health or a debug/status route if it reports r2_enabled (check routes read-only).
+- Inspect upload._RECENT_UPLOAD_EVENTS / a status endpoint that exposes storage_uri scheme of the next Rob-performed upload.
+- Simplest: Rob does ONE small fresh upload (ROB-ONLY) and executor reads the resulting storage_uri scheme (r2:// vs file://) read-only. (Upload stays Rob's action.)
+
+## After R2 verified + a durable source exists
+- Re-upload ellis video (or test persona) [ROB-ONLY] -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
+- Then TTS bridge (ROB-ONLY spend).
 
 ## ROB-ONLY (carried)
-- R2 secret values + enabling R2 (Rob).
-- Source upload/re-upload (auth, prod data, R2 writes).
-- Reprocess trigger (prod DB mutation + auth).
-- Backend redeploy (confirm-before-live).
-- TTS/face GPU deploy = new paid infra.
+- R2 secret values + correct store/project.
+- Upload/re-upload; reprocess trigger; backend redeploy (confirm-before-live); TTS/face GPU.
 - No secret values set by executor.
 
 ## Hard constraints
-No secret values set by executor. No prod DB writes / uploads by executor. No backend redeploy without confirm-before-live. No calls placed/ended by executor. No blind retry. No TTS/face this gate.
+No secret values set by executor. No prod DB writes/uploads by executor. No backend redeploy without confirm-before-live AND precondition met. No blind retry of file:// ellis sources. No TTS/face.
 
 ---
 
