@@ -94,3 +94,19 @@ REVISED PATH:
 5. (AUTO-RUN verify) sources advance past audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream requests.
 
 NOT done: no upload performed, no R2 secrets set, no redeploy, no retry. STT still unvalidated end-to-end. No TTS/face.
+
+## 2026-06-03T23:20:53Z — HALT: R2 secrets reported set but NOT present in backend secret store — did not redeploy
+Rob reported the five R2 names set. Read-only verification BEFORE redeploy found they are NOT in the Cerebrium secret store the backend reads. HALTED — did not redeploy (a redeploy now would still have R2 disabled and uploads would still fall back to file://).
+
+OBSERVED (read-only, names only):
+- cerebrium secrets list = 20 secrets, UNCHANGED count, and NONE of r2_enabled / r2_endpoint / r2_access_key / r2_secret_key / r2_bucket present.
+- Full list: ADMIN_PIN, ANTHROPIC_API_KEY, APP_SECRET_KEY, BRIDGE_AUTH_SECRET, BT_AUTO_MIGRATE, BT_RUN_SCHEDULER, BT_RUN_WORKER, DATABASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INTERNAL_QWEN_USER_IDS, OPENAI_API_KEY, QWEN_API_TOKEN, QWEN_BASE_URL, REDIS_URL, SENDGRID_API_KEY, STRIPE_PUBLIC_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STT_SERVICE_URL.
+
+LIKELY CAUSES (Rob to disambiguate; not guessed-and-proceeded):
+- Secrets set in a different project/scope than the CLI context (this CLI = the one showing backend secrets all session).
+- Set in a different store: dashboard "Project Secrets" vs app "Secrets" tab vs env — backend reads Cerebrium project secrets.
+- Set command silently failed (CLI version: earlier `cerebrium secret set NAME VALUE` worked; NEXT_REPLY suggested `secrets add name="value"` — syntax mismatch possible).
+
+DID NOT: redeploy, set secrets, upload, retry. Precondition (5 R2 names present) NOT met, so the gate's step 1 is not satisfied.
+
+NEXT (ROB-ONLY): Rob re-checks where/how the R2 secrets were set; confirm via `cerebrium secrets list` (his side) shows the five r2_ names in project p-a907d7c5. If his CLI shows them but this one does not, the two CLIs target different projects — fix that. Once the five names appear in `cerebrium secrets list` for p-a907d7c5, executor proceeds: confirm-before-live redeploy -> /api/health -> verify R2 active (read-only) -> docs -> stop.
