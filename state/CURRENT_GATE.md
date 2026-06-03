@@ -3,43 +3,34 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Enable R2 on the backend (prerequisite to STT validation). Read-only discovery done. Reframed: R2 creds likely EXIST in creds.env but the stored endpoint was flagged malformed and the creds are not in the backend secret store. Rob to locate/fix/set; executor does NOT touch values.
+Validate STT end-to-end. R2 config now present and backend redeployed (rev 00024). Next: confirm R2 actually WORKS (write yields r2://), which needs a Rob upload — then re-upload + reprocess to exercise STT. STOPPED at the upload boundary.
 
-## Done / verified
-- STT bridge btg-stt READY (/healthz 200). Backend rev 00023 wired, /api/health 200, WS routing to /stream confirmed (101).
-- Ellis 5 video sources file:// and unretrievable (failed upstream of STT).
-- R2 NOT enabled in backend (cerebrium secrets list: no r2_ names).
+## Done / verified (read-only)
+- STT bridge btg-stt READY (/healthz 200). WS routing to /stream confirmed (101).
+- Five R2 names present in backend secrets (r2_access_key, r2_bucket, r2_enabled, r2_endpoint, r2_secret_key); total 25.
+- Backend redeployed rev 00024; /api/health 200. _r2_enabled() should be True (all five non-empty).
 
-## Discovery (read-only, RESULTS 23:24Z; no values printed)
-- Exact backend config names (config.py:93-97, LOWERCASE, no env_prefix): r2_endpoint, r2_access_key, r2_secret_key, r2_bucket, r2_enabled(bool true).
-- Env source: config.py:125-126 env_file=/opt/backtogether/.env; Cerebrium injects secrets as env. Set names exactly as lowercase field names (avoid case mismatch).
-- STATE.md:199 — ~/btg-state/creds.env contains R2 keys (so creds were captured before).
-- STATE.md:436 — "R2_ENDPOINT in creds.env malformed — not addressed." LIKELY ROOT CAUSE: malformed endpoint; R2 fails/stays disabled.
-- STATE.md:43 / TURNOVER.md:49 claim "R2 live" — contradicts verified state (disabled). Doc vs behavior mismatch.
+## NOT yet verified (the boundary)
+- R2 *working* is unproven: _r2_enabled() only checks non-empty, NOT that the endpoint is well-formed or creds authenticate (prior 'malformed endpoint' flag means non-empty != working).
+- Confirmation requires owner-authed GET /api/upload/_diag OR an upload — both ROB-ONLY. No unauthenticated R2-status route exists.
 
-## Rob-only next steps
-1. Locate R2 creds: Cloudflare dashboard R2 -> bucket name + account endpoint (https://<accountid>.r2.cloudflarestorage.com) + R2 API token (access key id + secret). OR recover from ~/btg-state/creds.env, FIXING the malformed endpoint. Do NOT paste values in chat.
-2. Set the five lowercase names in Cerebrium project p-a907d7c5 (CLI form that worked earlier):
-   cerebrium secret set r2_enabled "true"
-   cerebrium secret set r2_endpoint "<endpoint>"
-   cerebrium secret set r2_access_key "<id>"
-   cerebrium secret set r2_secret_key "<secret>"
-   cerebrium secret set r2_bucket "<bucket>"
-   (If "secret set" errors on this CLI version, report the exact error; do not paste values.)
-3. Verify names only: cerebrium secrets list | grep -i r2_  (executor re-verifies name-only).
-4. Confirm to executor. Then executor proceeds: confirm-before-live redeploy -> /api/health -> verify R2 active read-only (no executor upload) -> docs -> STOP before upload/reprocess.
+## Next step — ROB-ONLY (upload boundary)
+1. Rob does ONE small test upload (any persona). Then either:
+   - GET {backend_base}/api/upload/_diag authed as Rob -> report storage_uri_val + r2_error for that event (scheme + error field, NOT secret values), OR
+   - give executor the source_id; executor reads storage_uri scheme read-only from DB.
+   backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
+2. PASS = storage_uri starts r2:// AND r2_error null. FAIL = file:// or r2_error set -> endpoint/creds still wrong, diagnose; do NOT proceed.
+3. On PASS (ROB-ONLY): re-upload ellis videos (or reuse the test upload's persona) -> reprocess.
+4. (AUTO-RUN verify) sources advance audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream requests.
 
-## DO NOT generate random secret values
-Random/placeholder values make _r2_enabled True but R2 auth FAILS (worse than disabled). Use real Cloudflare R2 creds only.
-
-## After R2 verified
-- Re-upload ellis video or test persona [ROB-ONLY] -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs). Then TTS (ROB-ONLY spend).
+## After STT validates
+- TTS bridge bring-up (voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval.
 
 ## ROB-ONLY (carried)
-- Locate/fix/set R2 creds (values, dashboard/CLI). Upload/reprocess. Backend redeploy (confirm-before-live). TTS/face GPU. No secret values set by executor.
+- Upload/re-upload; authed _diag call; reprocess trigger; TTS/face GPU. No secret values set by executor.
 
 ## Hard constraints
-No secret values set/read/printed by executor. No prod DB writes/uploads by executor. No redeploy until 5 r2_ names confirmed present AND confirm-before-live. No random secret generation. No blind retry of file:// sources. No TTS/face.
+No upload/authed-call by executor. No prod DB writes by executor. No reprocess until R2 verified working. No blind retry of file:// ellis sources. No TTS/face.
 
 ---
 
