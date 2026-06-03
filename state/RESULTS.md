@@ -39,3 +39,30 @@ CHECKPOINT (why stopped): reprocess endpoint POST /api/upload/_reprocess/{source
 NEXT (Rob action): POST /api/upload/_reprocess/{source_id} for each of the 5 video ids, authed as Rob, against backend base https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend. Then executor verifies (AUTO-RUN, read-only): video rows advance audio_extracted -> transcribed; source_speaker_segments > 0; STT bridge logs show transcription requests.
 
 NOT done: reprocess (Rob), TTS bridge, face/avatar. Spend within ceiling.
+
+## 2026-06-03T23:12:26Z — Reprocess FAILED upstream of STT — source files are file:// local, not in R2 (new blocker)
+Rob triggered reprocess for all 5 ellis video sources. Verified read-only: all 5 FAILED, but with a NEW error upstream of STT — not the prior errno-111. STT wiring is NOT implicated.
+
+OBSERVED (read-only DB, db now 23:09:19Z; rows updated ~23:08:33-35Z):
+- All 5 video sources: processing_status=failed, processing_stage=None, transcript=False, speech_seconds=0, speakers=0, audio_duration=0.
+- source_speaker_segments (ellis): 0 (unchanged).
+- error_message on each = the bare source file path (the FileNotFoundError arg).
+
+ROOT CAUSE (traced to source, not assumed):
+- processing.py:149-161 resolves the source file: tries ostore.get(storage_uri) [R2 download], else local file_path, else raises FileNotFoundError(file_path) at line 156-157.
+- The 5 sources have storage_uri = file:///opt/backtogether/uploads/<persona>/<uuid>.mov  (LOCAL disk path, scheme file://), NOT an r2:// URI.
+- They were uploaded to a previous deployment's local container disk and never pushed to R2. The current backend (rev 00023, fresh container) has no such local file, and ostore cannot fetch a file:// URI from R2.
+- => Pipeline fails at source-file open, BEFORE audio extraction / STT.
+
+STT NOT REACHED (so STT wiring remains unvalidated, but also un-disproven):
+- btg-stt logs since reprocess: no /stream WS / transcription requests observed (consistent with upstream failure; note cerebrium logs is sometimes flaky).
+
+CLASSIFICATION: CHECKPOINT / new blocker. NOT a blind-retry case — retrying reprocess will hit the same FileNotFoundError because the source files do not exist in retrievable storage.
+
+NEXT (decision for Rob — options, NOT yet chosen):
+- A. Re-upload the 5 source videos for ellis (fresh upload pushes to R2 with an r2:// storage_uri), then reprocess. This is the clean path to actually exercise STT.
+- B. Investigate whether the original local files still exist on any persistent volume and can be backfilled to R2 (uncertain; prior container disks may be gone).
+- C. Test STT with a brand-new test persona + a fresh small video upload (smallest path to validate STT end-to-end without depending on the orphaned ellis sources).
+NOTE: uploads / re-uploads are Rob actions (auth + prod data). Executor will verify read-only after.
+
+NOT done: STT end-to-end still unvalidated; no TTS; no face/avatar. No retry performed.
