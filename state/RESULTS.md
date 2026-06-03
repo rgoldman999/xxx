@@ -143,3 +143,28 @@ ROB-ONLY NEXT STEPS:
 4. Confirm to executor (name-only). Then executor: confirm-before-live redeploy -> /api/health -> verify R2 active read-only -> docs -> stop before upload/reprocess.
 
 NOT done: no values read/printed, no secrets set, no deploy, no upload, no retry. STT still unvalidated.
+
+## 2026-06-03T23:40:41Z — R2 secrets present; backend redeployed rev 00024; R2-active not fully verifiable read-only (diag route is owner-authed)
+R2 prerequisite advanced. Five R2 names now present; backend redeployed; health green. R2 *config present* but R2 *working* not yet proven (requires owner-authed call or an upload = Rob). Stopped at the upload boundary.
+
+VERIFIED (read-only, executor):
+- Backend secrets now include all five: r2_access_key, r2_bucket, r2_enabled, r2_endpoint, r2_secret_key. Total 25 (was 20).
+- Backend redeployed rev 00024 (logged bg deploy, no orphan), clean startup.
+- GET /api/health -> HTTP 200 {"status":"ok","service":"backtogether"}.
+- These secrets inject as env into rev 00024, so _r2_enabled() (object_store.py:36-38) should now be True (all five non-empty).
+
+NOT YET VERIFIED (boundary):
+- _r2_enabled() only checks non-empty; it does NOT validate the endpoint is well-formed or that creds authenticate. Given the prior 'malformed endpoint' flag, non-empty != working.
+- R2-active confirmation requires either:
+  (a) GET /api/upload/_diag — returns recent upload events incl storage_uri_val + r2_error — but it is owner-authed (get_current_user). Executor will not call as Rob.
+  (b) an actual upload, then read storage_uri scheme.
+  Both are Rob actions. No unauthenticated R2-status route exists.
+
+NEXT (ROB-ONLY, the upload boundary):
+1. Rob does ONE small test upload (any persona), then either:
+   - GET {backend_base}/api/upload/_diag authed as Rob, and report storage_uri_val + r2_error for that event (these are not secret values — scheme + error field), OR
+   - tell executor the source_id and executor reads storage_uri scheme read-only from DB.
+2. PASS = storage_uri starts r2:// and r2_error null. FAIL (file:// or r2_error set) = endpoint/creds still wrong -> diagnose, do NOT proceed to ellis re-upload.
+3. On PASS: re-upload ellis videos (or use the test upload's persona) -> reprocess -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
+
+NOT done: no upload by executor, no reprocess, no auth'd call as Rob, no TTS/face, no retry of file:// ellis sources.
