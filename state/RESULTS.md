@@ -168,3 +168,29 @@ NEXT (ROB-ONLY, the upload boundary):
 3. On PASS: re-upload ellis videos (or use the test upload's persona) -> reprocess -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
 
 NOT done: no upload by executor, no reprocess, no auth'd call as Rob, no TTS/face, no retry of file:// ellis sources.
+
+## 2026-06-04T00:42:03Z — R2 verification FAILED: post-redeploy uploads still file:// — R2 not active despite secrets present
+Rob uploaded test files after rev-00024 redeploy. Read-only DB check of newest sources: still file://. R2 is NOT persisting to R2. FAIL per gate. Did NOT proceed to ellis re-upload/reprocess.
+
+OBSERVED (read-only DB, db now 2026-06-04 00:39:19Z; user c447365d):
+- Newest video ad504088 (created 00:38:55, AFTER redeploy): storage_uri scheme = file://, audio_uri NULL, status=failed, error="ffmpeg error: ffmpeg version 5.1.9-0+deb12u1 ..." (a NEW, separate downstream error).
+- Other file 15c8350b (created 00:37:44, after redeploy): completed, scheme = file://.
+- => Uploads post-rev-00024 still land on file:// local disk. _r2_enabled() is effectively False OR R2 write fails and falls back to file://.
+
+CONCLUSION: R2 config present (5 names, total 25 secrets) but R2 NOT working. Confirms the earlier caution: _r2_enabled() non-empty check != functioning R2. Likely causes (not disambiguated; values not read):
+- r2_endpoint malformed (prior STATE.md:436 flag) -> client init/write fails -> file:// fallback.
+- r2_enabled bool not parsed truthy (value not exactly "true"/expected).
+- creds/auth failure in put_local_file -> silent file:// fallback.
+- backend logs not retrievable (cerebrium logs flaky this session) to see the exact R2 error.
+
+SECONDARY (note, not the blocker): newest video ad504088 failed with an ffmpeg error (different from file:///errno). Downstream; revisit after R2 fixed.
+
+NEXT (ROB-ONLY diagnosis; executor will not read secret values):
+1. Rob verifies the R2 secret VALUES locally (not in chat):
+   - r2_endpoint is a well-formed URL: https://<accountid>.r2.cloudflarestorage.com (no trailing slash, no bucket in path, https scheme). The prior "malformed endpoint" note likely applies.
+   - r2_enabled value is exactly the string true (lowercase) so the bool parses truthy.
+   - r2_access_key / r2_secret_key are a valid R2 API token pair for r2_bucket.
+2. Optionally Rob pulls backend logs (dashboard App Logs) for the upload at 00:38 to see the exact R2 error line (object_store fallback reason).
+3. Re-set any wrong value (Rob), redeploy (confirm-before-live), re-test one upload, executor re-checks scheme read-only. PASS only when storage_uri starts r2://.
+
+NOT done: no ellis re-upload, no reprocess, no secret values read by executor, no TTS/face, no blind retry.
