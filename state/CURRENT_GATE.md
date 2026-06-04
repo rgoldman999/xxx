@@ -3,34 +3,32 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Confirm R2 actually works (uploads -> r2://). R2 values corrected, backend redeployed rev 00025, health green. Need ONE fresh upload (Rob) to verify r2://. STOPPED at the upload boundary.
+Exercise the STT bridge end-to-end: get a VIDEO source into R2, reprocess it, and verify transcription. R2 prerequisite is now COMPLETE. No video has yet reached the STT bridge, so STT is still unvalidated end-to-end.
 
 ## Done / verified (read-only)
-- STT bridge btg-stt READY; WS routing to /stream confirmed (101).
-- Five R2 names present with corrected values (re-set; count 25).
-- Backend redeployed rev 00025; /api/health 200.
+- STT bridge btg-stt READY (/healthz 200, cuda, auth_secret_set=True); WS routing to /stream confirmed (HTTP 101).
+- Backend wired (stt service url set), rev 00025, /api/health 200.
+- R2 WORKING: fresh upload 066286e3 (01:12Z, rev 00025) -> storage_uri r2://, completed. (Before/after: <=00:38 file://; 01:12 r2://.) RESULTS 01:13Z.
 
-## Next step — ROB-ONLY (the upload boundary)
-1. Rob performs ONE small fresh upload (any persona) against rev 00025. (The earlier file:// uploads were on rev 00024 with bad values; they cannot become r2:// retroactively — a NEW upload is required.)
-2. Then either:
-   - Rob: GET {backend_base}/api/upload/_diag (authed) -> report storage_uri_val + r2_error for that event (scheme + error field, NOT secret values), OR
-   - Rob gives executor the new source_id / persona; executor reads storage_uri scheme read-only from DB.
-   backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
-3. PASS = storage_uri starts r2:// AND r2_error null. FAIL = file:// or r2_error set -> R2 still misconfigured, diagnose; do NOT proceed.
-4. On PASS (ROB-ONLY): re-upload ellis videos (or use a good source) -> reprocess.
-5. (AUTO-RUN) executor verifies STT end-to-end: sources advance audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream requests.
+## Next step — ROB-ONLY trigger, then AUTO-RUN verify
+1. (ROB-ONLY) Rob uploads a fresh VIDEO source (new persona or re-upload to ellis) — now lands r2://. Do NOT reuse the old file:// ellis videos (not in R2). Then trigger reprocess for that video: POST {backend_base}/api/upload/_reprocess/{source_id}, authed as Rob. backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
+2. (AUTO-RUN) executor verifies read-only:
+   - the video source advances audio_extracted -> transcribed (or processing_status complete).
+   - source_speaker_segments for that persona > 0.
+   - btg-stt logs show /stream transcription WS requests landing.
+   - capture exact error if it fails (then diagnose, NOT blind retry).
+3. (AUTO-RUN) write RESULTS + update gate with outcome.
 
-## Secondary (parked)
-- video ad504088 ffmpeg error (rev 00024 era) — revisit after R2 confirmed if that source is reused.
+This is the step that finally exercises the STT bridge end-to-end. PASS here = STT validated.
 
 ## After STT validates
-- TTS bridge bring-up (voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval.
+- TTS bridge bring-up (yields voice_id / callable persona). New paid GPU infra = ROB-ONLY spend approval. Mirrors the STT bring-up path (artifacts -> BRIDGE_AUTH_SECRET already project-scoped -> deploy -> smoke).
 
 ## ROB-ONLY (carried)
-- Upload/re-upload; authed _diag call; reprocess trigger; redeploy (confirm-before-live); TTS/face GPU. No secret values read/set by executor.
+- Video upload + reprocess trigger (auth as Rob, prod data/DB). TTS/face GPU = new paid infra. No secret values read/set by executor.
 
 ## Hard constraints
-No upload/authed-call/reprocess by executor. No prod DB writes by executor. No redeploy without confirm-before-live. No blind retry of file:// ellis sources. No TTS/face.
+No upload/authed-call/reprocess by executor. No prod DB writes by executor. No blind retry of file:// ellis sources. No TTS/face this gate.
 
 ---
 
