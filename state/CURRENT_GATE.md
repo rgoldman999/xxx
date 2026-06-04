@@ -3,30 +3,36 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Fix /stream 404 (WS upgrade not reaching container on Cerebrium v4). Unchanged redeploy did not fix it. A web claim about a fixed "/ws" path is disproven, but it surfaced two real code/toml leads. DECISION: escalate to Cerebrium support, or draft+test the highest-probability code fix. STT blocked end-to-end.
+Fix btg-stt /stream 404. Root differentiator now VERIFIED: WS works on our v4 apps when the route is a nested multi-segment path (backend /api/call/ws/{id} -> reaches container), and fails when it's a bare single-segment path (btg-stt /stream -> 404). Proposed fix: give the STT ws route a prefix. Needs Rob approval (code change + redeploy).
 
-## Done / verified
-- Unchanged redeploy (build-0844d7dd): /healthz 200, /stream still 404 (dashboard Runs 18:52:02). Rules out stale-revision. (RESULTS 01:53Z)
-- Web "/ws fixed ingress path" claim DISPROVEN by Cerebrium source: ws route name is arbitrary (URL segment = your websocket route). Twilio example uses /ws only as its chosen name. (RESULTS 01:59Z)
+## Verified (read-only, RESULTS 02:03Z)
+- Backend's own ws route /api/call/ws/{call_id} (mounted prefix="/api/call", @router.websocket): WS upgrade REACHES container — dashboard Runs logged status 1006 (WS close), not 404. => WebSockets WORK on our v4 apps.
+- btg-stt /stream (no prefix, bare): dashboard logs "/stream GET 404" — upgrade does NOT reach container.
+- ELIMINATED: router-vs-app mounting (backend uses @router+include_router too and WORKS); "/ws magic path" (disproven).
+- DIFFERENTIATOR: nested multi-segment path (works) vs bare single-segment path (fails).
+- CAVEAT (not proven causal): apps also differ in scale-to-zero (btg-stt min_replicas=0, GPU) vs always-on (backend min_replicas=1, CPU). Path-depth is lowest-risk first fix; scale-to-zero is the fallback suspect.
 
-## Two real leads (source-grounded, UNCONFIRMED — both code/toml, gated)
-1. WS mounting: working examples mount the ws route directly on app; ours uses an APIRouter websocket route + app.include_router (stt.py:205, main_stt.py:77). Whether Cerebrium ingress WS negotiation is sensitive to router-vs-app mount is unverified. HIGHEST-probability fix candidate.
-2. Entrypoint form: examples use entrypoint=["uvicorn","main_stt:app","--host","0.0.0.0","--port",8003]; ours is ["python3","-u","main_stt.py"]. Both bind 0.0.0.0:8003 (/healthz 200). Deviation from documented pattern.
+## Proposed fix — NEEDS ROB APPROVAL (draft first, then confirm-before-live)
+Plan (option B-style):
+1. (AUTO-RUN draft, show-diff, NOT applied) Edit bridge to mount the STT router under a prefix mirroring the backend: include_router(stt_svc.router, prefix="/api/stt") so the ws route becomes /api/stt/stream. Edit backend client _ws_url_from (stt_bridge.py:56-72) to build the new path. Two small reversible edits; no STT logic change.
+2. (ROB approves diff) apply.
+3. (confirm-before-live) redeploy btg-stt + backend.
+4. (verify read-only) probe new ws path -> dashboard Runs shows WS-close status (not GET 404); then a real reprocess of a fresh video -> transcribed, segments>0.
+5. If still 404: path-depth disproven -> test scale-to-zero hypothesis (btg-stt min_replicas=1 as a SHORT ROB-ONLY spend test, then revert) or escalate.
 
-## DECISION NEEDED (Rob) — pick one
-A. ESCALATE to Cerebrium support (ROB-ONLY): send evidence pack (RESULTS 01:53Z) + the two leads. Lower-risk, definitive. STT stays blocked until they answer.
-B. TRY highest-probability fix first: executor DRAFTS lead #1 (mount ws route directly on app, and/or align entrypoint) as show-diff for Rob approval; then confirm-before-live redeploy; re-test /stream via dashboard Runs. Faster if hypothesis holds; if still 404, fall back to A.
-   - If B: change is small + reversible (route decorator / include_router; optionally entrypoint). NO behavior change to STT logic. Draft only — nothing applied without approval.
-
-## Productive work available regardless
-- Small AUTO-RUN code fix (draft+show-diff): make the STT bridge call attach a message so the failure error string is never blank.
-- Do NOT start TTS until WS routing is solved — TTS likely streams over WS and would hit the same wall on paid GPU.
+## DECISION (Rob) — pick one
+- "draft it" -> executor produces the show-diff for the prefix fix (no apply).
+- or adjust the prefix choice (e.g. /v1 instead of /api/stt).
 
 ## ROB-ONLY (carried)
-- Cerebrium escalation; approve any code/toml change (show-diff first); redeploy (confirm-before-live); transport/arch decision; secret/url changes; upload/reprocess; TTS/face. No secret values read/set by executor.
+- Approve code change (show-diff first); redeploy (confirm-before-live); min_replicas/spend change; upload/reprocess; TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No code/toml change without show-diff + approval. No route rename on the disproven "/ws" claim. No deploy without confirm-before-live. No retry of 294c44ea until /stream non-404. No upload/reprocess by executor. No TTS/face.
+No code/toml change applied without show-diff + approval. No deploy without confirm-before-live. No retry of 294c44ea until /stream-equivalent non-404. No upload/reprocess by executor. No TTS/face.
+
+## Productive work available regardless
+- Small fix (draft+show-diff): make the STT bridge call attach a message so the failure error string is never blank.
+- Do NOT start TTS until WS routing is fixed (TTS likely streams over WS — same risk on paid GPU; AND the same prefix fix should be applied to the TTS bridge preemptively).
 
 ---
 
