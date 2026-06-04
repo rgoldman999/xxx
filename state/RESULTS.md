@@ -217,3 +217,21 @@ NEXT (ROB-ONLY, the upload boundary):
 4. On PASS: re-upload ellis videos / use a good source -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
 
 NOT done: no executor upload/authed-call/reprocess, no TTS/face, no retry of file:// ellis sources. STT still unvalidated end-to-end (pending a durable r2:// source).
+
+## 2026-06-04T01:13:23Z — R2 VERIFIED working: fresh upload lands r2:// (PASS)
+R2 prerequisite COMPLETE. Fresh upload against rev 00025 persisted to R2. STT end-to-end now unblocked (needs a video source in R2 + reprocess = next gate).
+
+VERIFIED (read-only DB, db now 2026-06-04 01:13:06Z):
+- Newest upload 066286e3 (photo, created 01:12:26, AFTER rev-00025 redeploy): storage_uri scheme = r2://, status=completed, error none. => PASS.
+- Clear before/after: all sources <=00:38 (rev 00024, bad R2 values) = file://; the 01:12 upload (rev 00025, corrected values) = r2://. R2 now active.
+- The corrected r2_endpoint (and values) fixed it.
+
+NOTE: the verifying upload was a PHOTO (no STT path). It proves R2 persistence. STT end-to-end still requires a VIDEO source that lands in r2:// then reprocess — that is the NEXT gate (ROB-ONLY), and the current gate said stop before ellis re-upload/reprocess. STOPPED here.
+
+NEXT GATE (ROB-ONLY trigger, then AUTO-RUN verify):
+1. Rob uploads a fresh VIDEO source (new persona or re-upload to ellis) — now lands r2://.
+2. Rob triggers reprocess for that video source (POST /api/upload/_reprocess/{source_id}, authed).
+3. (AUTO-RUN) executor verifies read-only: video advances audio_extracted -> transcribed; source_speaker_segments > 0; btg-stt logs show /stream transcription requests. This finally exercises the STT bridge end-to-end.
+Do NOT reuse the old file:// ellis videos (they are not in R2; re-uploading fresh is required). Do NOT blind-retry them.
+
+NOT done: no executor upload/reprocess, no TTS/face. STT bridge still not yet exercised end-to-end (no video has reached it).
