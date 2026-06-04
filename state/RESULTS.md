@@ -642,3 +642,23 @@ NEXT (ROB-ONLY confirm-before-live):
 2. After backend live: Rob reprocess a fresh video [ROB-ONLY] -> executor verifies read-only: audio_extracted -> transcribed, source_speaker_segments>0, transcript_text populated, dashboard /api/stt/transcribe POST 200 (authed, from backend). This is the full end-to-end STT validation.
 
 NOT done: backend NOT deployed, no reprocess, no secret handled, no push, no TTS/face. Stopped for backend redeploy approval.
+
+## 2026-06-04T04:16:14Z — Backend redeployed rev 00026 (/api/health 200). Both apps live with HTTP transcribe path. Awaiting Rob reprocess trigger for full end-to-end STT validation.
+Backend redeployed; both apps now live on the HTTP transcribe path. Ready for the full end-to-end STT test, which is Rob's trigger (reprocess = authed prod-DB mutation).
+
+DEPLOYED + VERIFIED:
+- btg-stt build-8566f671: HTTP /api/stt/transcribe route, POST smoke 401 (reachable, auth enforced).
+- backend rev 00026: /api/health 200; transcribe_file now httpx POSTs /api/stt/transcribe with X-Bridge-Auth.
+
+NEXT (ROB-ONLY trigger, then AUTO-RUN verify):
+1. Rob triggers reprocess of a fresh video. Recommended: existing 294c44ea-9784-42eb-988a-701a11d7c448 (already r2:// + audio_extracted, so it goes straight to the transcribe step — cleanest test of the new path). POST {backend_base}/api/upload/_reprocess/294c44ea... authed. (Or a new video upload+reprocess.)
+   backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
+   Note: 35-min file; transcription takes time (client timeout 1800s).
+2. (AUTO-RUN, read-only) executor verifies:
+   - source advances audio_extracted -> transcribed.
+   - transcript_text populated; source_speaker_segments>0.
+   - btg-stt dashboard Runs: authed POST /api/stt/transcribe 200.
+   - First successful end-to-end STT on a real upload.
+3. If transcribe 200 but diarization/segments off, diagnose from there (no blind retry).
+
+NOT done: no reprocess by executor (Rob's authed trigger), no secret handled, no push, no TTS/face. STT plumbing fully deployed; awaiting the validating reprocess.
