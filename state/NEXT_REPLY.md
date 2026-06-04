@@ -1,47 +1,42 @@
 # NEXT REPLY
 
 status: PENDING
-updated_at: 2026-06-04T01:25:00Z
+updated_at: 2026-06-04T02:05:00Z
 consumed_at:
 consumed_by:
-gate_commit: 50ee34c0681c7efd123fa38bc257eb48e0b407ef
-classification_hint: AUTO-RUN read-only diagnosis; likely ROB-ONLY backend secret/env fix then confirm-before-live deploy
+gate_commit: 5b819670ac9ef589c0535317f151a4b8eb320adf
+classification_hint: AUTO-RUN draft code plan; deploy remains confirm-before-live
 
 ## body
-Rob ran the authenticated inspect call for source 294c44ea-9784-42eb-988a-701a11d7c448. Key result: R2 is working, audio extracted, but the backend reports `env_stt_bridge_url_present: false`.
+Rob wants a way past the Cerebrium WebSocket blocker without waiting for support. Web research found a better bypass: move STT bridge invocation from WebSocket streaming to a plain HTTP transcription endpoint.
 
-Important inspect facts:
-- storage_uri is r2://backtogether-prod/...
-- audio_storage_uri is r2://backtogether-prod/...wav
-- audio_duration_seconds is 2085.941438
-- processing_status failed
-- processing_stage audio_extracted
-- error_message empty
-- transcript_len 0
-- env_hf_token_present false
-- env_stt_bridge_url_present false
+Sources found:
+- Cerebrium REST endpoints are authenticated POST calls to app functions at /v4/<project>/<app>/<function>.
+- Cerebrium async requests support ?async=true and can run up to 12 hours if response_grace_period is configured high enough.
+- Cerebrium has an official Transcribe 1 hour podcast example that accepts base64 audio or a file_url and returns Whisper transcription results over HTTP, not WebSockets.
+- Cerebrium also supports SSE streaming via generators, but for this pipeline batch HTTP is simpler and safer than SSE.
 
-Interpretation:
-The current blocker is very likely backend configuration for the STT bridge, not R2. The backend does not see the STT bridge URL under whatever env/config key `_inspect` checks. Do not continue trying R2, and do not blindly retry this source.
+Recommendation:
+Do not block on WebSocket proxying. Draft a non-WS STT path:
+1. Add an HTTP endpoint/function on btg-stt, for example POST /transcribe or function transcribe_audio, accepting one of:
+   - signed/public URL to the R2 audio object, or
+   - r2 bucket/key plus R2 env access on the STT app, or
+   - base64 audio only for small test files, not 35-minute production video.
+2. Have backend stt_bridge.py call the HTTP endpoint with requests/httpx instead of websockets.connect for this batch transcription path.
+3. Keep /stream untouched for later; add fallback or switch for STT batch only.
+4. For 35-minute audio, prefer Cerebrium async=true or configure response_grace_period high enough. Backend should poll/result-fetch or receive webhook if available; for first validation, synchronous HTTP may be acceptable only if timeout is safely configured.
+5. Add better error_message capture so STT failures include exception type/message and never remain blank.
 
-Next action for executor:
-1. Do read-only code/config diagnosis only.
-2. Inspect backend config and upload processing code to identify the exact expected env/config name for the STT bridge URL and the exact env/config name `_inspect` reports as env_stt_bridge_url_present.
-3. Compare that expected name to whatever was previously set for STT_SERVICE_URL / stt bridge endpoint in the gate/docs. Do not read or print secret values.
-4. Determine whether the backend needs a lower-case config key, different secret name, or redeploy to pick it up.
-5. Update RESULTS.md and CURRENT_GATE.md with the exact expected secret/env name and Rob-only set command if a secret/env must be set.
-6. Stop at the ROB-ONLY boundary if a secret/env value needs to be set, or before any backend redeploy unless the gate carries confirm-before-live deploy fields.
-
-Likely thing to verify:
-- The inspect output says env_stt_bridge_url_present=false. The backend may be expecting a config field like stt_bridge_url / STT_BRIDGE_URL, not STT_SERVICE_URL. Confirm from source before changing anything.
-
-Known STT bridge endpoint shape, from prior successful STT smoke:
-https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/btg-stt
+Next executor action:
+- Read-only inspect current btg-stt and backend STT code.
+- Draft the minimal non-WS HTTP transcription patch and show diff.
+- Include a small test plan.
+- Do not deploy until confirm-before-live.
+- Do not upload/reprocess until the HTTP path is deployed and smoked.
 
 Hard constraints:
-- do not retry/reprocess source 294c44ea until the missing STT bridge URL config is understood/fixed
-- do not upload/reprocess
-- do not start TTS or face/avatar
-- do not read, print, or set secret values
-- no backend redeploy without confirm-before-live
-- no blind retries
+- no deploy without explicit approval
+- no upload/reprocess/retry by executor
+- no TTS or face/avatar
+- no secret reads/prints/sets
+- do not remove the existing /stream route; bypass it for batch STT
