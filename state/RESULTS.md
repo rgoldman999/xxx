@@ -797,3 +797,24 @@ NEXT (ROB-ONLY): reprocess 294c44ea (authed) -> executor verifies read-only:
 GATE B still separate (diarization speaker_segments=0 / pyannote HF token) — not in this deploy.
 
 NOT done: no reprocess, no upload, no TTS/face, no push. Stopped for Rob to trigger the validating reprocess.
+
+## 2026-06-04T04:53:25Z — GATE A VALIDATED: source completed via Qwen extraction — 20 PersonaMemory rows, no Anthropic 401. Full upload pipeline (STT->extraction) green. Gate B root cause confirmed: pyannote Pipeline.from_pretrained returned None (HF token), non-fatal.
+Reprocess after rev 00027 (job 2929f14e) SUCCEEDED. Gate A validated end-to-end. Gate B root cause now precisely identified (non-fatal).
+
+GATE A — PASS (all conditions met, read-only DB):
+- source 294c44ea: status=completed, stage=memories_extracted, updated 04:52:53. NOT failed.
+- transcript_text populated: 31,459 chars.
+- persona_memories for persona 14578822: 20 rows created. Samples real + coherent: [opinion] dog purpose/fear, [personality] "Hopeful despite adversity... 'There's always hope'", [speech_pattern] "I'm gonna just go real slow", etc.
+- => Qwen/provider-agnostic persona extraction RAN and produced memories. NO Anthropic 401. The Anthropic->Qwen fix (890c95d, rev 00027) works end-to-end.
+- job 2929f14e: status=succeeded, retry 0, completed 04:52:53.
+- FULL upload pipeline now green: upload(r2) -> audio_extracted -> STT transcribe (HTTP /api/stt/transcribe) -> transcribed -> persona extraction (Qwen) -> memories_extracted -> completed.
+
+GATE B — root cause confirmed (SEPARATE, non-fatal):
+- source.error_message carries a NON-FATAL note: "[non-fatal] embed_source raised: RuntimeError: Pipeline.from_pretrained returned None - see logs above for the real cause; pyannote.audio's wrapper hides it."
+- speaker_segments=0, speaker_embeddings=0 (consistent).
+- Pipeline.from_pretrained returning None is the classic pyannote symptom of a missing/unaccepted HuggingFace token (matches _inspect env_hf_token_present=false). The job completes regardless (non-fatal), so it does NOT block STT/extraction.
+- This is Gate B, cleanly isolated. Fix = ROB sets a HF token (with pyannote model terms accepted) as a backend secret (value never in chat) + redeploy, OR confirm embeddings optional for now. NOT addressed here.
+
+MILESTONE: STT (HTTP transcribe) + persona extraction (Qwen) both validated on a real upload. The WebSocket-gateway blocker and the Anthropic-hardcode blocker are both resolved. Remaining: Gate B (pyannote HF token) for the speaker/voice-clone side.
+
+NOT done: no deploy, no reprocess (Rob triggered), no secret handled, no push, no TTS/face.
