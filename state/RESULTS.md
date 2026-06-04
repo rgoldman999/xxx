@@ -780,3 +780,20 @@ NEXT (ROB-ONLY confirm-before-live):
 3. Gate B (speaker_segments=0 / pyannote HF token) remains SEPARATE — not in this deploy.
 
 NOT done: no deploy, no reprocess, no secret value handled, no push, no TTS/face. Stopped for confirm-before-live backend redeploy.
+
+## 2026-06-04T04:47:38Z — Gate A DEPLOYED: backend rev 00027 live (Qwen persona extraction), /api/health 200. Awaiting Rob reprocess to validate extraction end-to-end.
+Backend redeployed with Gate A (persona extraction -> Qwen). Deploy + smoke passed. Stopped per scope (no reprocess).
+
+DEPLOY:
+- backend rev 00027 (worker ...00027...), clean startup, no orphan. Carries commit 890c95d (persona_builder Qwen change), tree was clean.
+- /api/health -> HTTP 200 {"status":"ok","service":"backtogether"}.
+
+NEXT (ROB-ONLY): reprocess 294c44ea (authed) -> executor verifies read-only:
+- source status NOT failed (completes); error_message empty (no more Anthropic 401).
+- PersonaMemory rows created for persona 14578822 (Qwen extraction produced memories).
+- transcript_text still populated.
+- If Qwen call fails (conn/auth/timeout/parse): capture exact error read-only; Qwen-endpoint issue -> diagnose, no blind retry.
+
+GATE B still separate (diarization speaker_segments=0 / pyannote HF token) — not in this deploy.
+
+NOT done: no reprocess, no upload, no TTS/face, no push. Stopped for Rob to trigger the validating reprocess.
