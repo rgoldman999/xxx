@@ -265,3 +265,34 @@ Do NOT blind-retry 294c44ea until the error is known.
 NOTE: console error Rob saw ("listener indicated async response... message channel closed") is a browser-EXTENSION message, unrelated to backend/STT.
 
 NOT done: STT still not validated end-to-end (failed at STT step, cause unknown). No TTS/face. No retry.
+
+## 2026-06-04T01:26:24Z — STT failure diagnosis (read-only): messageless exception at STT WS call; leading cause = timeout/cold-start on 35-min file. Two red herrings eliminated.
+Diagnosed source 294c44ea read-only against processing.py / stt_bridge.py using the _inspect output. Root cause not 100% confirmable read-only (needs the exception TYPE from logs), but narrowed to a strong leading hypothesis; two misleading signals eliminated.
+
+_INSPECT KEY FIELDS:
+- processing_status=failed, processing_stage=audio_extracted, error_message="" (EMPTY).
+- storage_uri=r2://backtogether-prod/.../a8d748b3....mp4 ; audio_storage_uri=r2://.../294c44ea....wav ; audio_duration_seconds=2085.94 (35 min).
+- transcript_len=0, speech_seconds=null, embedding_rows=0, face_detected=true.
+- env_stt_bridge_url_present=false ; env_hf_token_present=false.
+
+ELIMINATED (red herrings, verified in source):
+1. env_stt_bridge_url_present=false is MISLEADING. _inspect (upload.py:97) checks STT_BRIDGE_URL/BRIDGE_URL — legacy names we did NOT set. The actual STT client (stt_bridge.py:54 _base_url) reads settings.stt_service_url = STT_SERVICE_URL, which IS set+verified. So the bridge URL is configured correctly; the diagnostic checks the wrong var.
+2. r2:// audio path is NOT passed to STT. processing.py: file_path resolved local via ostore.get (line 153), audio_path = local .wav (174), diarize_and_transcribe(audio_path) (216) gets the LOCAL path. transcribe_file receives a real local file, not r2://.
+
+WHY error_message IS EMPTY (mechanism, verified):
+- Outer handler processing.py:407-408 sets processing_status=failed; error_message=str(e)[:500]. The message is empty because str(e) is EMPTY -> the propagated exception has no message string (bare/messageless exception: e.g. timeout/CancelledError/connection-close raised with no args).
+
+LEADING HYPOTHESIS (strong, NOT yet confirmed):
+- Failure is at the STT WebSocket call (stt_bridge.transcribe_file -> WS /stream), on a 35-min (2085s) file.
+- btg-stt is scale-to-zero (min_replicas=0). A reprocess WS connect can race the GPU cold-start (container spin-up + whisper load ~9s). websockets.connect open_timeout (seen =15s on the call path) could time out on connect during cold start -> messageless TimeoutError/connection exception -> str(e) empty. OR a long-file transcription timeout/disconnect mid-stream.
+- Consistent with: empty error, failure right after audio_extracted, no transcript, no /stream visible (logs unretrievable so not dispositive).
+
+NOT CONFIRMED because: exception TYPE is only in btg-stt/backend logs (cerebrium logs flaky/empty this session) or would need code instrumentation. Did NOT assert as fact; did NOT retry.
+
+NEXT (to confirm + fix — options for Rob/planning, NOTHING done):
+1. Rob: dashboard btg-stt App Logs + backend App Logs ~01:15-01:16 -> the exact exception at the WS call (timeout? connection refused? cold-start?). This disambiguates.
+2. If cold-start race: options — pre-warm btg-stt (min_replicas=1 temporarily; ROB-ONLY spend change) for the test, OR increase WS open_timeout / add connect retry in stt_bridge.py (code change, AUTO-RUN draft+show-diff, confirm-before-live deploy).
+3. If long-file timeout: chunk the audio or raise the per-file timeout (code change, same gating).
+4. Separately worth a fix: the empty-error path — transcribe_file should attach a message (type name) so error_message is never blank (small AUTO-RUN code fix, show-diff).
+
+Do NOT retry 294c44ea until the exception type is known. No TTS/face. No deploy/upload/reprocess by executor.
