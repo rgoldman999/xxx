@@ -1,98 +1,47 @@
 # NEXT REPLY
 
 status: PENDING
-updated_at: 2026-06-04T01:05:00Z
+updated_at: 2026-06-04T01:25:00Z
 consumed_at:
 consumed_by:
-gate_commit: 8d6146d72c8ad35ce9d185666df2dcef2e434153
-classification_hint: ROB-ONLY create/apply fresh Cloudflare R2 token values
+gate_commit: 50ee34c0681c7efd123fa38bc257eb48e0b407ef
+classification_hint: AUTO-RUN read-only diagnosis; likely ROB-ONLY backend secret/env fix then confirm-before-live deploy
 
 ## body
-Rob requested exact instructions for getting new Cloudflare R2 tokens and applying them in Cerebrium. This is ROB-ONLY because it involves credential creation and secret values. Executor must not create, read, print, or set secret values.
+Rob ran the authenticated inspect call for source 294c44ea-9784-42eb-988a-701a11d7c448. Key result: R2 is working, audio extracted, but the backend reports `env_stt_bridge_url_present: false`.
 
-Goal: create a fresh Cloudflare R2 S3 API token for the existing bucket, then replace the Cerebrium backend R2 secret values so uploads persist as r2:// instead of file://.
+Important inspect facts:
+- storage_uri is r2://backtogether-prod/...
+- audio_storage_uri is r2://backtogether-prod/...wav
+- audio_duration_seconds is 2085.941438
+- processing_status failed
+- processing_stage audio_extracted
+- error_message empty
+- transcript_len 0
+- env_hf_token_present false
+- env_stt_bridge_url_present false
 
-Cloudflare dashboard steps for Rob:
-1. Open Cloudflare dashboard.
-2. Go to R2 Object Storage.
-3. Confirm the target bucket name. This becomes r2_bucket exactly.
-4. Find the account-level R2 S3 endpoint. Correct shape only:
-   https://<accountid>.r2.cloudflarestorage.com
-   Do not use a public r2.dev URL. Do not include the bucket name in the endpoint. Do not include a trailing path.
-5. Go to R2 > Manage R2 API Tokens.
-6. Create a new R2 API token / S3 API token.
-7. Permissions: Object Read and Write for the target bucket. If bucket-scoped permissions are available, scope it only to the target bucket. If not, use the narrowest account-level R2 read/write option available.
-8. Save/copy the Access Key ID and Secret Access Key locally. Do not paste them into chat or repo.
+Interpretation:
+The current blocker is very likely backend configuration for the STT bridge, not R2. The backend does not see the STT bridge URL under whatever env/config key `_inspect` checks. Do not continue trying R2, and do not blindly retry this source.
 
-Local variable setup for Rob only:
+Next action for executor:
+1. Do read-only code/config diagnosis only.
+2. Inspect backend config and upload processing code to identify the exact expected env/config name for the STT bridge URL and the exact env/config name `_inspect` reports as env_stt_bridge_url_present.
+3. Compare that expected name to whatever was previously set for STT_SERVICE_URL / stt bridge endpoint in the gate/docs. Do not read or print secret values.
+4. Determine whether the backend needs a lower-case config key, different secret name, or redeploy to pick it up.
+5. Update RESULTS.md and CURRENT_GATE.md with the exact expected secret/env name and Rob-only set command if a secret/env must be set.
+6. Stop at the ROB-ONLY boundary if a secret/env value needs to be set, or before any backend redeploy unless the gate carries confirm-before-live deploy fields.
 
-R2_ENDPOINT='https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
-R2_ACCESS_KEY='YOUR_NEW_R2_ACCESS_KEY_ID'
-R2_SECRET_KEY='YOUR_NEW_R2_SECRET_ACCESS_KEY'
-R2_BUCKET='YOUR_BUCKET_NAME'
+Likely thing to verify:
+- The inspect output says env_stt_bridge_url_present=false. The backend may be expecting a config field like stt_bridge_url / STT_BRIDGE_URL, not STT_SERVICE_URL. Confirm from source before changing anything.
 
-Non-secret sanity checks before applying:
-
-case "$R2_ENDPOINT" in
-  https://*.r2.cloudflarestorage.com) echo 'endpoint shape OK' ;;
-  *) echo 'endpoint shape BAD - fix before continuing' ;;
-esac
-printf 'endpoint length: %s\n' "${#R2_ENDPOINT}"
-printf 'access key length: %s\n' "${#R2_ACCESS_KEY}"
-printf 'secret key length: %s\n' "${#R2_SECRET_KEY}"
-printf 'bucket length: %s\n' "${#R2_BUCKET}"
-
-Apply in Cerebrium. Since the keys already exist, first inspect supported update/delete syntax without exposing values:
-
-~/Library/Python/3.13/bin/cerebrium secrets --help
-
-Preferred, if this CLI supports update/set:
-
-~/Library/Python/3.13/bin/cerebrium secrets update r2_enabled=true
-~/Library/Python/3.13/bin/cerebrium secrets update r2_endpoint="$R2_ENDPOINT"
-~/Library/Python/3.13/bin/cerebrium secrets update r2_access_key="$R2_ACCESS_KEY"
-~/Library/Python/3.13/bin/cerebrium secrets update r2_secret_key="$R2_SECRET_KEY"
-~/Library/Python/3.13/bin/cerebrium secrets update r2_bucket="$R2_BUCKET"
-
-If update is not supported but delete/remove is supported, delete the existing five names and re-add them with KEY=VALUE syntax:
-
-~/Library/Python/3.13/bin/cerebrium secrets delete r2_enabled
-~/Library/Python/3.13/bin/cerebrium secrets delete r2_endpoint
-~/Library/Python/3.13/bin/cerebrium secrets delete r2_access_key
-~/Library/Python/3.13/bin/cerebrium secrets delete r2_secret_key
-~/Library/Python/3.13/bin/cerebrium secrets delete r2_bucket
-
-~/Library/Python/3.13/bin/cerebrium secrets add r2_enabled=true
-~/Library/Python/3.13/bin/cerebrium secrets add r2_endpoint="$R2_ENDPOINT"
-~/Library/Python/3.13/bin/cerebrium secrets add r2_access_key="$R2_ACCESS_KEY"
-~/Library/Python/3.13/bin/cerebrium secrets add r2_secret_key="$R2_SECRET_KEY"
-~/Library/Python/3.13/bin/cerebrium secrets add r2_bucket="$R2_BUCKET"
-
-Verify names only:
-
-~/Library/Python/3.13/bin/cerebrium secrets list | grep -i r2_
-
-Expected names:
-- r2_access_key
-- r2_bucket
-- r2_enabled
-- r2_endpoint
-- r2_secret_key
-
-If any CLI command errors, Rob should paste only the command/error text, never the values.
-
-After Rob confirms the five names are present with fresh token values, executor proceeds from CURRENT_GATE:
-- re-verify names only
-- confirm-before-live backend redeploy
-- backend /api/health smoke
-- Rob performs one fresh small upload if needed
-- executor verifies read-only that storage_uri is r2://
-- update RESULTS.md and CURRENT_GATE.md
-- stop before Ellis re-upload/reprocess
+Known STT bridge endpoint shape, from prior successful STT smoke:
+https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/btg-stt
 
 Hard constraints:
-- no secret values in chat or repo
-- executor does not read, print, create, or set secret values
+- do not retry/reprocess source 294c44ea until the missing STT bridge URL config is understood/fixed
+- do not upload/reprocess
+- do not start TTS or face/avatar
+- do not read, print, or set secret values
 - no backend redeploy without confirm-before-live
-- no blind retry of old file:// Ellis sources
-- no TTS or face/avatar
+- no blind retries
