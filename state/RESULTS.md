@@ -759,3 +759,24 @@ FLAGS before deploy (NOT addressed now; diff-only per Rob):
 NEXT (ROB): "apply it" -> executor applies the 3 edits to persona_builder.py, shows greps/py_compile, commits (backtogether). Then (before redeploy) name-only check QWEN_BASE_URL/QWEN_API_TOKEN present; then confirm-before-live backend redeploy; then Rob reprocess -> verify transcribed + memories extracted (+ Gate B separately).
 
 NOT done: no code applied, no deploy, no reprocess, no secret handled, no push, no TTS/face. Diff only.
+
+## 2026-06-04T04:41:10Z — Gate A APPLIED + committed (backtogether 890c95d): persona_builder -> get_llm_client(qwen), Anthropic removed. Compiles, only 1 file, QWEN_BASE_URL/QWEN_API_TOKEN present. Awaiting confirm-before-live backend redeploy.
+Rob approved "apply it" (Qwen). Applied the 3 edits to persona_builder.py, verified, committed. Pre-deploy name-only check done. No deploy yet.
+
+APPLIED + VERIFIED:
+- persona_builder.py: removed Anthropic SDK import + module-level Anthropic client; extract_persona_data now get_llm_client("qwen") + run_in_executor(llm.complete(model="gpt-4o-mini", max_tokens=4096, messages=[{system:EXTRACTION_PROMPT},{user}])); read response.choices[0].message.content.
+- py_compile OK. NO functional Anthropic/Claude refs remain (only 2 comment mentions: docstring "Does NOT use Anthropic/Claude" + a stale parse-failure comment "Claude returned..." — cosmetic, left to keep change minimal). No anthropic credential referenced.
+- git status: only persona_builder.py. diff = the approved draft exactly (22 ins/13 del).
+- Commit backtogether main 890c95d, clean, NOT pushed.
+
+PRE-DEPLOY FLAG CLEARED (name-only, read-only): backend secrets include QWEN_BASE_URL + QWEN_API_TOKEN (and INTERNAL_QWEN_USER_IDS). So QwenLLM won't ValueError on empty base_url; Qwen routing verified earlier (D-2). NOTE: name-presence != value-valid/endpoint-reachable for this path — the reprocess after deploy is the real confirmation.
+
+NEXT (ROB-ONLY confirm-before-live):
+1. Redeploy backend (picks up persona_builder Qwen change).
+   - cmd: cd backend && cerebrium deploy --config-file ./cerebrium.toml (logged bg)
+   - smoke: /api/health 200.
+2. After live: Rob reprocess 294c44ea (authed) -> executor verifies read-only: source completes (status not failed), error_message empty, PersonaMemory rows created for persona 14578822 (extraction ran via Qwen). transcript_text already populated.
+   - If Qwen call fails (conn/auth/timeout): capture exact error; that's a Qwen-endpoint config issue, diagnose (no blind retry).
+3. Gate B (speaker_segments=0 / pyannote HF token) remains SEPARATE — not in this deploy.
+
+NOT done: no deploy, no reprocess, no secret value handled, no push, no TTS/face. Stopped for confirm-before-live backend redeploy.
