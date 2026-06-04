@@ -3,29 +3,30 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Validate upload STT end-to-end. Both apps deployed on HTTP transcribe path. The triggered reprocess did NOT land (row untouched, no job enqueued) — new path not yet exercised. Re-trigger needed.
+STT transcription is VALIDATED end-to-end (HTTP /api/stt/transcribe). The reprocess job then failed on two downstream issues: (1) Anthropic 401 invalid x-api-key, (2) source_speaker_segments=0. Resolve those next. Upload pipeline not yet fully green.
 
-## Done / verified
-- btg-stt build-8566f671 (HTTP /api/stt/transcribe, POST smoke 401 = reachable). backend rev 00026 (/api/health 200, client httpx POSTs the route). Code 0668e69.
-- REPROCESS DID NOT LAND (RESULTS 04:22Z): 294c44ea still failed/audio_extracted, updated 01:16 (unchanged); 0 sources processed since deploy; job_ledger has NO new redrive job (only old f894f233). reprocess_source resets row BEFORE enqueue; row not reset => handler didn't complete. Neither dashboard shows the _reprocess POST. => the authed POST did not reach/complete; NOT an STT result.
-- Bonus: old job f894f233 last_error = TimeoutError at stt_bridge.py:220 open_stream ws.recv() — the OLD WS path our HTTP fix replaces. Confirms root-cause analysis + that the fix removes this exact call.
+## Done / verified (RESULTS 04:28Z)
+- STT PASS: transcript_text = 31,583 chars of real speech via the new HTTP path. Source cleared audio_extracted -> transcribed -> clustered. Job 8370a8d7 ran on rev 00026. The WS->HTTP fix WORKS. (First successful transcription on a real upload.)
+- Job 8370a8d7 FINAL: failed, stage=clustered, retry 1, completed 04:27:39.
 
-## Next step — ROB-ONLY: re-trigger reprocess + report response
-1. Rob re-runs authed POST {backend_base}/api/upload/_reprocess/294c44ea-9784-42eb-988a-701a11d7c448 and REPORTS the HTTP status + body.
-   - success body: {"status":"reset_and_enqueued","enqueued":true,"job_id":...}
-   - if non-2xx (401/404/5xx): that explains the no-op; fix the call (auth/url/path) and retry.
-   - backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
-2. (AUTO-RUN read-only verify, after a successful enqueue): row pending -> transcribed; transcript_text populated; source_speaker_segments>0; btg-stt Runs authed POST /api/stt/transcribe 200.
-3. If transcribe 200 but diarization/segments off -> diagnose (no blind retry).
+## Two downstream blockers (NEW, separate from STT)
+1. ANTHROPIC 401 (ROB-ONLY secret): error = AuthenticationError 401 'invalid x-api-key' (req_011C... = Anthropic) at processing.py:301 extract_persona_data. Backend ANTHROPIC_API_KEY secret is invalid/expired. Rob must set a valid key (value never in chat), redeploy backend, re-verify.
+   - NOTE: the locked stack uses Qwen for LLM, but this upload-extraction path calls Anthropic directly. Worth Rob confirming whether extract_persona_data SHOULD use Anthropic or should route to Qwen (possible stack-decision mismatch) — flag, not fix.
+2. source_speaker_segments=0 / speaker_embeddings=0 (diarization path): transcript is full but the pyannote/diarization side produced nothing. Verification condition segments>0 NOT met. Open question: does the new HTTP /api/stt/transcribe return only text (not the speakers{} dict the old WS diarize_and_transcribe provided), or is diarization a separate pyannote step (processing.py:240-248 embed_source) that zeroed independently? Needs read-only review of diarize_and_transcribe return shape vs the new transcribe_file. (May mean the HTTP route needs to also return/representation diarization, OR embed_source failed before the Anthropic error.)
+
+## Next step — Rob decision / ordering
+A. (ROB-ONLY) Set a valid ANTHROPIC_API_KEY (or confirm extract_persona_data should use Qwen, not Anthropic). Then backend redeploy (confirm-before-live) + re-trigger reprocess.
+B. (AUTO-RUN read-only, can do now) Investigate the segments=0 / diarization question: compare diarize_and_transcribe (does it still return speakers{}?) vs the new transcribe_file return shape; determine if HTTP path dropped diarization or pyannote embed_source failed independently. Report; propose fix as draft (gated).
+- Recommend B now (read-only, no waiting) to characterize blocker 2 while Rob handles the key for blocker 1.
 
 ## ROB-ONLY (carried)
-- Re-trigger reprocess (authed); push (if wanted); Cerebrium escalation (realtime WS); TTS/face. No secret values read/set by executor.
+- ANTHROPIC_API_KEY value; Qwen-vs-Anthropic routing decision; backend redeploy; reprocess; push; TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No reprocess/authed-call by executor. No deploy. No prod DB writes by executor. No push unless asked. No TTS/face.
+No reprocess/deploy/authed-call by executor. No prod DB writes. No secret values. No push unless asked. No TTS/face.
 
 ## Follow-on
-- Realtime WS still blocked (separate). TTS/avatar WS will need same HTTP treatment at bring-up.
+- Realtime WS still blocked (separate). TTS/avatar WS -> same HTTP treatment at bring-up.
 
 ---
 
