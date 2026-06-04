@@ -422,3 +422,23 @@ ESCALATION EVIDENCE PACK (for Rob to send Cerebrium support/Discord):
 - Question for Cerebrium: why is a wss:// request to a custom-runtime app's @app.websocket route routed/logged as a plain GET and returned 404 to the container? Is there a required flag/config for WS upgrade proxying on v4 sync endpoints, or a different endpoint host/path for WS?
 
 NOT done: no toml/code change, no retry of 294c44ea, no second redeploy, no upload/reprocess, no TTS/face. STT blocked pending Cerebrium support answer.
+
+## 2026-06-04T01:59:49Z — Google '/ws fixed-path' claim is WRONG (disproven by Cerebrium source). But it surfaces 2 real leads: @router-vs-@app WS mounting, and entrypoint form. Both = code/toml change (out of current scope).
+Evaluated the Google answer against Cerebrium source docs (read-only). Its headline claim is incorrect; do NOT act on it as written. It does inadvertently point at two real structural deviations from the working example. No code/toml change made (out of scope this turn).
+
+GOOGLE CLAIM (WRONG): WS must route to a fixed "/ws" ingress path (wss://.../<app>/ws); Cerebrium "proxies the /ws path specifically."
+DISPROVEN BY SOURCE:
+- Cerebrium WS docs (https://cerebrium.ai/docs/endpoints/websockets): URL last segment = your FastAPI @app.websocket("<path>") route name. Route name is arbitrary; the example uses /ws only because that app named its route /ws.
+- Twilio example (https://cerebrium.ai/docs/v4/examples/twilio-voice-agent): defines @app.websocket("/ws") and connects to .../4-twilio-agent/ws. The /ws is that app's chosen route, NOT a magic ingress path.
+- One of Google's citations was Oracle generative-AI docs (different platform) — answer stitched unrelated sources.
+=> Renaming our route /stream -> /ws is NOT a justified fix. Not doing it.
+
+TWO REAL LEADS (source-grounded, UNCONFIRMED — both are code/toml changes, gated):
+1. WS route mounting: working Twilio example mounts the ws route DIRECTLY on the app: @app.websocket("/ws"). Our bridge uses @router.websocket("/stream") on an APIRouter + app.include_router(router) (main_stt.py:77, stt.py:205). Equivalent under normal ASGI, but it's a real deviation; whether Cerebrium ingress WS negotiation is sensitive to router-vs-app mounting is UNVERIFIED. This is the starkest difference from every working example -> highest-probability code fix candidate IF we try one before support.
+2. Entrypoint form: every Cerebrium WS example uses entrypoint=["uvicorn","main:app","--host","0.0.0.0","--port",N] (uvicorn invoked directly). Ours is ["python3","-u","main_stt.py"] (uvicorn inside __main__). Both bind 0.0.0.0:8003 (/healthz 200 proves serving), but it's a deviation from the documented-working pattern.
+
+CONFIDENCE: two plausible hypotheses, NEITHER confirmed. Not asserting a fix. Definitive answer still best from Cerebrium support (can confirm whether @router+include_router breaks their WS ingress). If Rob wants to try the highest-probability fix first, it's lead #1 (mount ws route on app), as a draft+show-diff, deploy confirm-before-live.
+
+DECISION NEEDED (Rob): (A) escalate to Cerebrium support with the evidence pack (RESULTS 01:53Z) + these two leads, OR (B) let executor DRAFT lead #1 (and/or #2) as a show-diff for approval, then a confirm-before-live redeploy to test. Both are valid; A is lower-risk/definitive, B is faster if the hypothesis holds.
+
+NOT done: no code change, no toml change, no route rename, no deploy, no retry, no upload/reprocess, no TTS/face. Per scope: stopped before any code/toml/deploy.
