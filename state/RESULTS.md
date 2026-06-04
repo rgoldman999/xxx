@@ -708,3 +708,25 @@ SECONDARY — diarization produced nothing:
 NET: STT transcription validated. Two downstream blockers remain: (1) Anthropic 401 invalid key (ROB secret), (2) speaker_segments=0 (diarization path — needs review). 
 
 NOT done: no reprocess by executor, no deploy, no secret handled, no push, no TTS/face. Did not re-trigger.
+
+## 2026-06-04T04:33:27Z — Both blockers characterized read-only. Blocker1: persona_builder hardcodes Anthropic SDK (should use get_llm_client like conversation.py). Blocker2: speakers=0 is PRE-EXISTING/by-design in diarize_and_transcribe (NOT caused by HTTP change); real speaker data is pyannote embed_source which yielded 0.
+Followed NEXT_REPLY (AUTO-RUN read-only investigation). Both downstream blockers characterized against source. No code changed. Rob's clarification (app does not use Anthropic) confirmed correct: persona extraction is wrongly hardcoded to Anthropic.
+
+BLOCKER 1 — persona extraction hardcoded to Anthropic (the fatal 401):
+- persona_builder.py:3 imports the Anthropic SDK; line 9 instantiates a module-level Anthropic client using the anthropic api-key setting; line 30-31 calls client.messages.create(model="claude-sonnet-4-20250514", ...). Hardcoded Claude.
+- By design it RE-RAISES on API failure (comment lines ~36-44) -> the 401 fails the whole source. (Parse failure returns [] non-fatal.)
+- The app HAS a provider-agnostic client: llm_client.py get_llm_client() -> .complete(**kwargs) (OpenAI SDK shape; supports Qwen via LLM_PROVIDER=qwen, OpenAI default). conversation.py already uses it: get_llm_client(override) + run_in_executor(lambda: self._llm.complete(**kwargs)).
+- => persona_builder is the OUTLIER. Fix = route extract_persona_data through get_llm_client().complete(...) like conversation.py; drop the anthropic import + hardcoded model. No Anthropic credential needed. (Matches Rob: not using Claude.)
+
+BLOCKER 2 — source_speaker_segments=0 is PRE-EXISTING + by design, NOT caused by the HTTP change:
+- diarize_and_transcribe (processing.py:52-81) ALWAYS returned speakers:{} — docstring: "Diarization in the classical sense is NOT done here... speakers:{} (filled by voice_clusterer downstream)". Return shape {"speakers":{}, "transcript":text, "utterances":[]} is IDENTICAL before/after my HTTP change (I only changed how text is fetched). So speech_speakers=0/speech_seconds=0 from this fn is expected, not a regression.
+- Real speaker data comes from a SEPARATE path: voice_clusterer / pyannote embed_source (processing.py:248) -> SpeakerEmbedding rows -> source_speaker_segments. We saw speaker_embeddings=0.
+- So segments=0 means pyannote embed_source either found 0 speakers OR raised non-fatally (processing.py:283-288 catches `[non-fatal] embed_source raised`). Job reached stage=clustered then failed at Anthropic (line 301), so embedding ran and yielded 0. This is a SEPARATE, pre-existing diarization concern — needs read-only check of whether embed_source logged a non-fatal error / whether 0 speakers is real for this file. NOT caused by STT/HTTP work.
+
+TWO SEPARATE GATES (per NEXT_REPLY): see CURRENT_GATE — (A) provider/persona-extraction, (B) diarization zero-segments.
+
+DRAFT PLAN blocker 1 (NOT applied; AUTO-RUN draftable, show-diff on approval):
+- Edit persona_builder.py: remove the Anthropic SDK import + module-level client; in extract_persona_data, call get_llm_client() and .complete(model=<openai-style id, e.g. gpt-4o-mini -> Qwen maps it>, max_tokens=4096, messages=[{system},{user}]) via run_in_executor (mirror conversation.py); parse resp.choices[0].message.content. Keep the re-raise-on-API-fail / []-on-parse-fail semantics. 
+- Open Q for Rob: which provider should extraction use — Qwen (LLM_PROVIDER=qwen) or OpenAI? llm_client default is OpenAI; stack decision #19 says Qwen local. Rob/Jeannine confirm; the code becomes provider-agnostic either way.
+
+NOT done: no code change, no deploy, no reprocess, no credential handled, no push, no TTS/face. Did not ask Rob for an Anthropic credential (per Rob: not using Claude).
