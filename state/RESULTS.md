@@ -685,3 +685,26 @@ WHY THE REPROCESS LIKELY DID NOT LAND (Rob to check — request side, not visibl
 NEXT (ROB-ONLY): re-trigger the authed reprocess and report the HTTP response (status + body). A success returns {"status":"reset_and_enqueued","enqueued":true,"job_id":...}. Then executor re-verifies read-only (row -> pending -> transcribed, transcript_text, segments>0, btg-stt POST /api/stt/transcribe 200).
 
 NOT done: no reprocess by executor, no deploy, no upload, no secret handled, no push, no TTS/face. Per instruction: did not reprocess again.
+
+## 2026-06-04T04:28:38Z — STT VALIDATED (transcript 31583 chars via HTTP /api/stt/transcribe — first ever). But job FAILED downstream: (1) Anthropic 401 invalid x-api-key at extract_persona_data; (2) source_speaker_segments=0 (diarization produced nothing). segments>0 NOT met.
+Reprocess landed (job 8370a8d7, HTTP 200). Verified read-only. STT transcription SUCCEEDED end-to-end via the new HTTP path — first ever. Job then FAILED at a later, unrelated step. Reporting both; did not chase (separate issues, secret-side + diarization).
+
+STT — PASS (the target):
+- transcript_text populated: 31,583 chars, real coherent speech (preview: "Okay, so I got to tell you, the terrier that you're about to see...").
+- Source advanced PAST audio_extracted -> transcribed -> clustered (cleared the STT step that failed every prior attempt). The WS->HTTP /api/stt/transcribe rewrite WORKS end-to-end. Job 8370a8d7 ran on rev 00026.
+- This validates the core fix.
+
+JOB OUTCOME — FAILED downstream:
+- Final: source status=failed, stage=clustered, updated 04:27:39. Job 8370a8d7 status=failed, retry_count=1, completed 04:27:39.
+- error_message + job last_error: AuthenticationError 401 'invalid x-api-key' (Anthropic API; request_id req_011C... = Anthropic). 
+- Location: processing.py:301 extract_persona_data(transcript, persona_id) (persona_builder) — the post-transcription step that calls the Anthropic API to extract PersonaMemory rows. The backend's Anthropic API key (ANTHROPIC_API_KEY secret) is INVALID/expired. This is a SECRET-VALUE issue (Rob), unrelated to STT/WS.
+
+SECONDARY — diarization produced nothing:
+- source_speaker_segments=0, speaker_embeddings=0, speech_speakers=0, speech_seconds=0.
+- So the pyannote diarization/embedding side (processing.py:240-248 embed_source) yielded zero, even though transcript_text is full. 
+- => Verification condition "source_speaker_segments > 0" is NOT met.
+- Open question (NOT chased): does the new HTTP /api/stt/transcribe return only transcript text and not the speaker/diarization structure the old WS path provided? The old diarize_and_transcribe returned a dict with speakers{}; need to confirm the HTTP path still populates diarization, OR diarization is a separate pyannote step that failed/zeroed independently. Likely needs read-only review of diarize_and_transcribe vs the new transcribe_file return shape. Flag for next gate; do not fix now.
+
+NET: STT transcription validated. Two downstream blockers remain: (1) Anthropic 401 invalid key (ROB secret), (2) speaker_segments=0 (diarization path — needs review). 
+
+NOT done: no reprocess by executor, no deploy, no secret handled, no push, no TTS/face. Did not re-trigger.
