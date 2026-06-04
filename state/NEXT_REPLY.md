@@ -1,57 +1,98 @@
 # NEXT REPLY
 
 status: PENDING
-updated_at: 2026-06-04T00:50:00Z
+updated_at: 2026-06-04T01:05:00Z
 consumed_at:
 consumed_by:
 gate_commit: 8d6146d72c8ad35ce9d185666df2dcef2e434153
-classification_hint: ROB-ONLY fix R2 secret values; no executor secret reads
+classification_hint: ROB-ONLY create/apply fresh Cloudflare R2 token values
 
 ## body
-R2 verification failed after backend rev 00024: post-redeploy uploads still landed as file://, so R2 is not actually active even though the five r2_ names are present. Treat this as an R2 secret VALUE/config issue, not an STT issue.
+Rob requested exact instructions for getting new Cloudflare R2 tokens and applying them in Cerebrium. This is ROB-ONLY because it involves credential creation and secret values. Executor must not create, read, print, or set secret values.
 
-Most likely causes from CURRENT_GATE:
-- r2_endpoint malformed. Expected exactly: https://<accountid>.r2.cloudflarestorage.com ; no bucket path, no trailing path, no public bucket URL.
-- r2_enabled not parsed truthy. Expected exactly lowercase true.
-- r2_access_key / r2_secret_key token pair not valid for r2_bucket.
-- r2_bucket name mismatch.
+Goal: create a fresh Cloudflare R2 S3 API token for the existing bucket, then replace the Cerebrium backend R2 secret values so uploads persist as r2:// instead of file://.
 
-Rob-only next steps:
-1. Locally inspect the actual R2 values. Do not paste values into chat or repo.
-2. Fix likely endpoint first. Use the account-level R2 S3 endpoint, not a bucket URL:
-   - good shape: https://<accountid>.r2.cloudflarestorage.com
-   - bad shapes: https://pub-...r2.dev, https://.../bucket-name, anything with a trailing path
-3. Ensure r2_enabled is exactly true.
-4. Re-set corrected value(s) in Cerebrium using KEY=VALUE syntax. If the CLI cannot update existing keys, report only the error text; do not paste values.
-5. Confirm only that the five r2_ names remain present.
+Cloudflare dashboard steps for Rob:
+1. Open Cloudflare dashboard.
+2. Go to R2 Object Storage.
+3. Confirm the target bucket name. This becomes r2_bucket exactly.
+4. Find the account-level R2 S3 endpoint. Correct shape only:
+   https://<accountid>.r2.cloudflarestorage.com
+   Do not use a public r2.dev URL. Do not include the bucket name in the endpoint. Do not include a trailing path.
+5. Go to R2 > Manage R2 API Tokens.
+6. Create a new R2 API token / S3 API token.
+7. Permissions: Object Read and Write for the target bucket. If bucket-scoped permissions are available, scope it only to the target bucket. If not, use the narrowest account-level R2 read/write option available.
+8. Save/copy the Access Key ID and Secret Access Key locally. Do not paste them into chat or repo.
 
-Useful local checks that do not print values:
+Local variable setup for Rob only:
 
-# Check lengths only
+R2_ENDPOINT='https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com'
+R2_ACCESS_KEY='YOUR_NEW_R2_ACCESS_KEY_ID'
+R2_SECRET_KEY='YOUR_NEW_R2_SECRET_ACCESS_KEY'
+R2_BUCKET='YOUR_BUCKET_NAME'
+
+Non-secret sanity checks before applying:
+
+case "$R2_ENDPOINT" in
+  https://*.r2.cloudflarestorage.com) echo 'endpoint shape OK' ;;
+  *) echo 'endpoint shape BAD - fix before continuing' ;;
+esac
 printf 'endpoint length: %s\n' "${#R2_ENDPOINT}"
 printf 'access key length: %s\n' "${#R2_ACCESS_KEY}"
 printf 'secret key length: %s\n' "${#R2_SECRET_KEY}"
 printf 'bucket length: %s\n' "${#R2_BUCKET}"
 
-# Check endpoint shape without printing full value
-case "$R2_ENDPOINT" in
-  https://*.r2.cloudflarestorage.com) echo 'endpoint shape OK' ;;
-  *) echo 'endpoint shape BAD - must be https://<accountid>.r2.cloudflarestorage.com' ;;
-esac
+Apply in Cerebrium. Since the keys already exist, first inspect supported update/delete syntax without exposing values:
 
-# If values need to be changed and `secrets add` says already exists, determine supported command:
 ~/Library/Python/3.13/bin/cerebrium secrets --help
 
-After Rob fixes the R2 value(s), executor should proceed from CURRENT_GATE:
+Preferred, if this CLI supports update/set:
+
+~/Library/Python/3.13/bin/cerebrium secrets update r2_enabled=true
+~/Library/Python/3.13/bin/cerebrium secrets update r2_endpoint="$R2_ENDPOINT"
+~/Library/Python/3.13/bin/cerebrium secrets update r2_access_key="$R2_ACCESS_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets update r2_secret_key="$R2_SECRET_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets update r2_bucket="$R2_BUCKET"
+
+If update is not supported but delete/remove is supported, delete the existing five names and re-add them with KEY=VALUE syntax:
+
+~/Library/Python/3.13/bin/cerebrium secrets delete r2_enabled
+~/Library/Python/3.13/bin/cerebrium secrets delete r2_endpoint
+~/Library/Python/3.13/bin/cerebrium secrets delete r2_access_key
+~/Library/Python/3.13/bin/cerebrium secrets delete r2_secret_key
+~/Library/Python/3.13/bin/cerebrium secrets delete r2_bucket
+
+~/Library/Python/3.13/bin/cerebrium secrets add r2_enabled=true
+~/Library/Python/3.13/bin/cerebrium secrets add r2_endpoint="$R2_ENDPOINT"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_access_key="$R2_ACCESS_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_secret_key="$R2_SECRET_KEY"
+~/Library/Python/3.13/bin/cerebrium secrets add r2_bucket="$R2_BUCKET"
+
+Verify names only:
+
+~/Library/Python/3.13/bin/cerebrium secrets list | grep -i r2_
+
+Expected names:
+- r2_access_key
+- r2_bucket
+- r2_enabled
+- r2_endpoint
+- r2_secret_key
+
+If any CLI command errors, Rob should paste only the command/error text, never the values.
+
+After Rob confirms the five names are present with fresh token values, executor proceeds from CURRENT_GATE:
 - re-verify names only
 - confirm-before-live backend redeploy
 - backend /api/health smoke
-- have Rob perform one fresh upload if needed; executor verifies read-only that storage_uri is r2://
+- Rob performs one fresh small upload if needed
+- executor verifies read-only that storage_uri is r2://
 - update RESULTS.md and CURRENT_GATE.md
 - stop before Ellis re-upload/reprocess
 
 Hard constraints:
-- executor does not read, print, or set secret values
+- no secret values in chat or repo
+- executor does not read, print, create, or set secret values
+- no backend redeploy without confirm-before-live
 - no blind retry of old file:// Ellis sources
 - no TTS or face/avatar
-- no backend redeploy without confirm-before-live
