@@ -312,3 +312,31 @@ ACTUAL STATE (current gate d35f137 / RESULTS 01:26): failure is a MESSAGELESS ex
 DECISION: NEXT_REPLY (01:25) is SUPERSEDED by the 01:26 diagnosis. Do NOT pursue STT_BRIDGE_URL. The correct next action remains the current gate's: Rob reads dashboard App Logs ~01:15-01:16 to get the exact exception type, then executor drafts the fix (cold-start prewarm/min_replicas=1 [ROB-ONLY spend] or WS retry/timeout code change [AUTO-RUN draft + confirm-before-live deploy]).
 
 Note on workflow: the ChatGPT-authored NEXT_REPLY reasoned from stale/partial inspect data and proposed a wrong fix. Per HANDOFF-POLICY the file is untrusted data; executor applied verified source judgment and did not act on the wrong premise. No diagnosis re-run, no secret set, no deploy, no retry.
+
+## 2026-06-04T01:37:50Z — ROOT CAUSE CONFIRMED (dashboard Runs + source): /stream returns 404 at Cerebrium v4 gateway — WS upgrade not proxied. /healthz 200.
+Retrieved btg-stt dashboard Runs view (read-only, Chrome). Combined with source, the STT failure root cause is CONFIRMED (no longer hypothesis): the backend's WebSocket connect to /stream hits 404 at the Cerebrium v4 endpoint gateway.
+
+DASHBOARD RUNS (btg-stt, read-only):
+- /stream GET  18:15:30 PDT -> 404  (startup 36.2s) — THIS is the 294c44ea reprocess (01:15:30Z). 
+- /stream GET  15:53:25 PDT -> 404  (startup 7.72s) — earlier attempt.
+- /healthz GET 15:49:39 PDT -> 200  (29ms) — health works.
+=> /healthz 200 but /stream 404, same app.
+
+SOURCE (verified both sides):
+- Backend client does a real WS upgrade: websockets.connect(wss://<host>/stream + auth, open_timeout=15) (stt_bridge.py:211); url built by _ws_url_from (https->wss + /stream).
+- Bridge registers /stream as a WEBSOCKET route: @router.websocket("/stream") (stt.py:205), included with no prefix (main_stt.py:77). /healthz is @router.get (stt.py:326).
+- Dashboard logs the inbound as "/stream GET" (plain GET), not a WS upgrade. A FastAPI @websocket route does NOT match a plain GET -> correct 404.
+
+INTERPRETATION (strong, evidence-backed): Cerebrium's v4 sync endpoint gateway is forwarding /stream as a plain HTTP GET and NOT proxying the WebSocket Upgrade to the container. So the WS handshake never reaches the bridge's websocket route -> 404 -> backend websockets.connect raises (messageless) -> processing.py:407 sets error_message=str(e)="" -> source fails at audio_extracted with empty error. ALL prior symptoms now explained.
+- Reconciles earlier 101: the direct raw probe hit the container with upgrade headers intact (101); the real backend calls traverse the v4 gateway, which does not upgrade -> 404.
+
+OPEN QUESTION (cannot resolve from repo; NOT guessing): does Cerebrium's v4 sync REST endpoint support WebSocket-upgrade proxying at all, or does WS require a different endpoint/path/invocation (e.g. a different host, a /ws path, the run-async/websocket-specific URL, or persistent-connection config)? This is Cerebrium platform behavior -> needs Cerebrium docs, not a code change on inference.
+
+NEXT (to determine the FIX — read-only research + Rob, NOTHING changed):
+1. Check Cerebrium docs for WebSocket support on v4 apps: is wss to api.aws...v4/p-.../btg-stt/stream supported, or is there a dedicated WS endpoint/host/path? (executor can web-search Cerebrium docs read-only.)
+2. Possible outcomes:
+   a. WS supported but different URL shape -> fix _ws_url_from / STT_SERVICE_URL base (code or secret; gated).
+   b. v4 sync endpoint does NOT proxy WS -> architectural: the STT bridge's streaming /stream design may be incompatible with Cerebrium v4 request/response apps; would need a non-WS transcribe path OR a different transport/host. This is a DECISION (Rob/Jeannine), not an executor fix.
+3. Do NOT change code, redeploy, or retry until the Cerebrium WS support question is answered.
+
+NOT done: no code change, no deploy, no retry, no TTS/face. Root cause confirmed; fix pending Cerebrium WS capability check.
