@@ -374,3 +374,25 @@ NEXT (still read-only / Rob; NOTHING changed):
 - Likely fix candidate (to PROPOSE, not apply): add readycheck_endpoint and/or align entrypoint to the documented uvicorn string form in ops/cerebrium/stt/cerebrium.toml, then redeploy (confirm-before-live) and re-test /stream. This is a small toml change = AUTO-RUN draft + show-diff; deploy = confirm-before-live. Verify against TOML reference FIRST.
 
 NOT done: no code/toml change, no deploy, no retry, no secret/env change, no upload/reprocess, no TTS/face.
+
+## 2026-06-04T01:44:50Z — TOML reference check: readycheck/entrypoint suspects DOWNGRADED (both valid per docs). 404 cause is platform/deploy-layer WS upgrade not proxied — likely deployed revision didn't apply custom runtime, or needs Cerebrium support.
+Fetched Cerebrium TOML reference (read-only). It eliminates the two toml-config suspects I floated and isolates the cause to the platform/deploy layer.
+
+SOURCE: https://cerebrium.ai/docs/toml-reference/toml-reference
+
+FINDINGS vs our ops/cerebrium/stt/cerebrium.toml:
+- readycheck_endpoint: default "" => empty uses TCP readiness. Omitting it is VALID (TCP fallback), NOT required. A missing readycheck would not turn a WS upgrade into a plain GET 404. => suspect (a) DOWNGRADED, not the cause.
+- entrypoint: type string[]; our ["python3","-u","main_stt.py"] is a valid shape (reference example is also a list). main_stt.py __main__ runs uvicorn.run(host=0.0.0.0, port=8003) — functionally equivalent to the docs' direct-uvicorn entrypoint; /healthz 200 proves uvicorn is serving. => suspect (b) DOWNGRADED.
+- URL shape: reference confirms "all endpoints at .../v4/{project-id}/{app-name}/your/endpoint" => our wss://.../v4/p-a907d7c5/btg-stt/stream is CORRECT.
+
+NET: WS is supported (custom runtime present + valid), URL correct, uvicorn bind correct, entrypoint + healthcheck valid, readycheck optional. Yet the dashboard shows /stream arriving as a plain GET -> 404. The cause is NOT in the visible repo config. Most plausible remaining explanations (need Rob/platform, NOT guessed as fact):
+1. The DEPLOYED btg-stt revision did not actually apply [cerebrium.runtime.custom] (e.g. built before the block was added, or the deploy used a default ASGI runtime that doesn't proxy WS upgrade). Check dashboard Settings/Code/Builds for the active revision's runtime, or a clean redeploy.
+2. A Cerebrium-side WS proxying nuance not documented (e.g. needs explicit websocket support flag, a different invocation, or readycheck must be HTTP 200 for WS routing). Would need Cerebrium support/Discord confirmation.
+
+This is the limit of read-only docs research. Answer to "classify next path": CONFIG/RUNTIME-or-PLATFORM issue on the deployed app (NOT URL-only, NOT code-transport-change yet, NOT confirmed platform-incompatible — WS is supported).
+
+PROPOSED next action (to PROPOSE only; nothing applied):
+- Lowest-risk first: redeploy btg-stt unchanged (confirm-before-live) to ensure the current custom-runtime toml is the ACTIVE revision, then re-test /stream via dashboard Runs. If still 404, escalate to Cerebrium support with the Runs evidence (/healthz 200, /stream GET 404).
+- Optional toml alignment to mirror docs exactly (low confidence it matters): set entrypoint to the uvicorn string-array form ["uvicorn","main_stt:app","--host","0.0.0.0","--port","8003"] and add readycheck_endpoint="/healthz". Small toml change = AUTO-RUN draft + show-diff; deploy = confirm-before-live. NOT applied.
+
+NOT done: no code/toml change, no deploy, no retry, no secret/env change, no upload/reprocess, no TTS/face.
