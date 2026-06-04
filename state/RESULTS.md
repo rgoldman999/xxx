@@ -194,3 +194,26 @@ NEXT (ROB-ONLY diagnosis; executor will not read secret values):
 3. Re-set any wrong value (Rob), redeploy (confirm-before-live), re-test one upload, executor re-checks scheme read-only. PASS only when storage_uri starts r2://.
 
 NOT done: no ellis re-upload, no reprocess, no secret values read by executor, no TTS/face, no blind retry.
+
+## 2026-06-04T01:10:48Z — R2 values corrected; backend redeployed rev 00025; /api/health 200 — awaiting one fresh upload to verify r2://
+R2 secrets re-set with corrected values (Rob); backend redeployed to pick them up; health green. Now need ONE fresh upload (Rob) to confirm storage_uri=r2:// before proceeding.
+
+VERIFIED (read-only, executor):
+- Five R2 names present (r2_access_key, r2_bucket, r2_enabled, r2_endpoint, r2_secret_key). (Re-set existing keys -> count stays 25; names confirmed.)
+- Backend redeployed rev 00025 (logged bg deploy, no orphan); clean startup; startup-log GET /api/health 200.
+- GET /api/health -> HTTP 200 {"status":"ok","service":"backtogether"}.
+
+WHY A FRESH UPLOAD IS NEEDED:
+- The two earlier file:// uploads (00:37-00:38) were against rev 00024 with the OLD (bad) R2 values. They cannot retroactively become r2://.
+- Verification of the corrected R2 config requires a NEW upload made against rev 00025. _r2_enabled() non-empty check passes, but only an actual upload proves the endpoint/creds work (r2:// + no r2_error).
+
+NEXT (ROB-ONLY, the upload boundary):
+1. Rob performs ONE small fresh upload (any persona) against rev 00025.
+2. Then either:
+   - Rob hits GET {backend_base}/api/upload/_diag (authed) and reports storage_uri_val + r2_error for that event (scheme + error field only), OR
+   - Rob gives executor the new source_id / persona; executor reads storage_uri scheme read-only from DB.
+   backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
+3. PASS = storage_uri starts r2:// AND r2_error null. FAIL = file:// or r2_error -> R2 still wrong, diagnose (do NOT proceed).
+4. On PASS: re-upload ellis videos / use a good source -> reprocess [ROB-ONLY] -> executor verifies STT end-to-end (transcribed, segments>0, /stream logs).
+
+NOT done: no executor upload/authed-call/reprocess, no TTS/face, no retry of file:// ellis sources. STT still unvalidated end-to-end (pending a durable r2:// source).
