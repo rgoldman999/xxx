@@ -340,3 +340,37 @@ NEXT (to determine the FIX — read-only research + Rob, NOTHING changed):
 3. Do NOT change code, redeploy, or retry until the Cerebrium WS support question is answered.
 
 NOT done: no code change, no deploy, no retry, no TTS/face. Root cause confirmed; fix pending Cerebrium WS capability check.
+
+## 2026-06-04T01:44:11Z — Cerebrium docs check: v4 WS IS supported on custom runtime; our URL shape + entrypoint are correct. 404 cause narrowed to gateway upgrade not reaching container.
+Read-only Cerebrium docs/web research complete. WebSockets ARE supported on Cerebrium v4 (custom runtime). Our btg-stt config, URL shape, and uvicorn bind are all correct per docs — so this is NOT platform-incompatible and NOT a simple URL typo. The 404 is the WS upgrade arriving as a plain GET at the container.
+
+SOURCES (read-only):
+- Cerebrium WebSocket docs: https://cerebrium.ai/docs/endpoints/websockets (also docs.cerebrium.ai/cerebrium/endpoints/websockets)
+- Twilio voice agent example (FastAPI @app.websocket("/ws") on Cerebrium): https://docs.cerebrium.ai/v4/examples/twilio-voice-agent
+- Multilingual STT voice-agent blog (faster-whisper + WS on Cerebrium): https://cerebrium.ai/blog/overcoming-transcription-challenges-for-multilingual-ai-voice-agents
+- Realtime coding assistant (wss URL shape): https://cerebrium.ai/blog/building-a-real-time-coding-assistant
+- Landing page feature list incl "WebSocket endpoints" + "Streaming endpoints": https://cerebrium.ai/
+
+ANSWERS:
+1. Do v4 apps support inbound WebSockets? YES. Documented first-class. REQUIRES a custom runtime ([cerebrium.runtime.custom] with port + entrypoint + healthcheck_endpoint + readycheck_endpoint).
+2. Correct URL shape: wss://api.aws.<region>.cerebrium.ai/v4/<project-id>/<app-name>/<websocket-function-name>, where <websocket-function-name> = the FastAPI @app.websocket("<path>") route path. For us: wss://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/btg-stt/stream  (route is @router.websocket("/stream")). Our backend _ws_url_from builds exactly this -> URL shape is CORRECT.
+3. Limits/timeouts: docs page itself lists no explicit WS message-size/duration cap; healthcheck_endpoint non-200 => restart, readycheck_endpoint non-200 => removed from routing. (Long 35-min streams: no documented hard cap found; scale-to-zero cold start adds first-call latency. A dedicated WS timeout/limit doc was not found in this pass.)
+4. If WS not supported: N/A — it IS supported. (Alternative transports Cerebrium documents: Streaming endpoints (HTTP chunked) and REST; relevant only if we later choose to move off WS.)
+5. CLASSIFY NEXT PATH: NOT "platform incompatible"; NOT "URL/path fix only" (URL already correct). Best-supported classification = CONFIG/RUNTIME issue on the deployed app: the WS upgrade is not reaching the container (dashboard logged inbound as "/stream GET" 404), despite a correct custom-runtime toml and correct uvicorn bind.
+
+ELIMINATED (docs + source, read-only):
+- WS-unsupported: NO — supported on custom runtime.
+- Wrong URL shape: NO — matches docs pattern (.../btg-stt/stream).
+- Bad entrypoint/bind: NO — main_stt.py runs uvicorn.run("main_stt:app", host=0.0.0.0, port=8003); /healthz 200 proves uvicorn serving.
+
+REMAINING SUSPECTS (need Rob/platform confirmation; NOT guessed as fact):
+a. Docs custom-runtime example specifies BOTH healthcheck_endpoint AND readycheck_endpoint; our toml sets healthcheck_endpoint=/healthz but NO readycheck_endpoint. Unconfirmed whether a missing readycheck affects WS upgrade routing vs plain GET. WORTH VERIFYING against TOML reference.
+b. Docs entrypoint example is a string ("uvicorn main:app --host 0.0.0.0 --port 5000"); ours is a list form (["python3","-u","main_stt.py"]). Both should run uvicorn, but whether Cerebrium's WS proxy keys off the documented uvicorn entrypoint form is unconfirmed.
+c. Whether the DEPLOYED btg-stt revision actually applied [cerebrium.runtime.custom] (vs an earlier default ASGI runtime) — deploy/platform fact, check dashboard Settings/Code or redeploy logs.
+d. disable_auth=true + ?bridge_auth= query — unlikely to cause 404 (would be 401/403); low priority.
+
+NEXT (still read-only / Rob; NOTHING changed): 
+- (AUTO-RUN) read Cerebrium TOML reference for runtime.custom required fields (esp. readycheck_endpoint) + any WS-specific routing note. 
+- Likely fix candidate (to PROPOSE, not apply): add readycheck_endpoint and/or align entrypoint to the documented uvicorn string form in ops/cerebrium/stt/cerebrium.toml, then redeploy (confirm-before-live) and re-test /stream. This is a small toml change = AUTO-RUN draft + show-diff; deploy = confirm-before-live. Verify against TOML reference FIRST.
+
+NOT done: no code/toml change, no deploy, no retry, no secret/env change, no upload/reprocess, no TTS/face.
