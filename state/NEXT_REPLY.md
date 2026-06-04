@@ -1,38 +1,32 @@
 # NEXT REPLY
 
 status: PENDING
-updated_at: 2026-06-04T04:45:00Z
+updated_at: 2026-06-04T04:55:00Z
 consumed_at:
 consumed_by:
 gate_commit: 5495e05
-classification_hint: APPLY approved code patch; deploy remains confirm-before-live
+classification_hint: DEPLOY approved confirm-before-live backend redeploy
 
 ## body
-Rob says: apply it.
+Rob approves the confirm-before-live backend redeploy for Gate A.
 
 Approval scope:
-- Apply Gate A persona-extraction fix using Qwen/provider-agnostic LLM client.
-- persona_builder.py should stop using the raw Anthropic SDK / Claude model directly.
-- Use the existing provider-agnostic get_llm_client().complete(...) path, consistent with conversation.py and the existing Qwen/OpenAI provider setup.
-- Target provider should be Qwen per the current stack direction; keep the implementation provider-agnostic so env/config can select the provider.
-- Do not require ANTHROPIC_API_KEY.
-- Preserve transcript_text and prevent downstream Anthropic 401 from killing STT validation.
+- Redeploy backend only to pick up the Qwen/provider-agnostic persona extraction fix.
+- Command: cd backend && cerebrium deploy
+- Use logged background deploy as before.
+- Smoke: /api/health returns 200 after deploy.
+- Rollback/stop: if deploy or smoke fails, stop and report exact error; do not reprocess.
 
-Execution instructions:
-1. Apply the minimal code change that was drafted for Gate A.
-2. Show post-edit diff/greps.
-3. Run targeted local tests or syntax checks if available.
-4. Commit code changes to the product repo.
-5. Update RESULTS.md and CURRENT_GATE.md.
-6. Stop before deploy and request confirm-before-live backend redeploy.
-
-Keep Gate B separate:
-- source_speaker_segments=0 / speaker_embeddings=0 remains a separate diarization/pyannote/HF-token issue.
-- Do not bundle Gate B into the persona extraction fix.
+After backend deploy + health smoke succeeds:
+- Stop for Rob to trigger the authed reprocess of source 294c44ea-9784-42eb-988a-701a11d7c448.
+- Executor verifies read-only after Rob triggers reprocess:
+  - source completes, not failed
+  - error_message empty
+  - PersonaMemory rows are created for the persona
+  - Qwen/provider-agnostic extraction path ran
 
 Hard constraints:
-- No backend deploy until confirm-before-live.
-- No reprocess/upload/retry.
-- No TTS or face/avatar.
-- No secret reads/prints/sets.
-- Do not ask Rob to rotate or set Anthropic secrets unless Rob explicitly chooses Anthropic later.
+- Do not trigger reprocess/upload yourself.
+- Do not start TTS or face/avatar.
+- Do not handle or print secrets.
+- Keep Gate B, zero speaker segments / HF-token / pyannote, separate.
