@@ -623,3 +623,22 @@ RISK NOTES (honest):
 - 35-min file: single _whisper.transcribe call, client timeout 1800s. If it exceeds, raise timeout or chunk (not now).
 
 NOT done: no deploy, no reprocess, no push, no TTS/face. Stopped for confirm-before-live (btg-stt first, then backend).
+
+## 2026-06-04T04:11:26Z — btg-stt HTTP transcribe deploy SMOKE PASS: POST /api/stt/transcribe returns 401 (reached container, auth enforced) NOT 404. HTTP IS proxied where WS was not — option B confirmed. Awaiting backend redeploy approval.
+btg-stt redeployed with the HTTP transcribe route (build-8566f671). Smoke confirms the route is reachable and proxied as HTTP — the core option-B hypothesis is validated.
+
+DEPLOY: btg-stt build-8566f671 live, clean startup (whisper+vad loaded, uvicorn 0.0.0.0:8003).
+
+SMOKE:
+- /healthz -> 200 (9.5s).
+- POST /api/stt/transcribe with NO X-Bridge-Auth header -> HTTP 401 {"detail":"bridge auth failed"}, 0.23s.
+- => 401 NOT 404. The POST request REACHED the container, hit the /api/stt/transcribe route, and require_bridge_auth rejected the missing header. This is the proof: HTTP POST IS proxied to btg-stt, unlike WS upgrades (which 404 because they never reach the container). Option B (HTTP transcribe) works at the gateway/routing level.
+- Did NOT send the secret (401 test proves reachability without handling any credential). Full 200+transcript test needs X-Bridge-Auth -> happens when backend (has the secret) calls it post-deploy, or Rob runs an authed POST.
+
+GATE HALT condition (POST 404) NOT triggered -> cleared to proceed to backend redeploy (separate confirm-before-live).
+
+NEXT (ROB-ONLY confirm-before-live):
+1. Redeploy backend (client transcribe_file now httpx POSTs /api/stt/transcribe with X-Bridge-Auth). smoke /api/health 200.
+2. After backend live: Rob reprocess a fresh video [ROB-ONLY] -> executor verifies read-only: audio_extracted -> transcribed, source_speaker_segments>0, transcript_text populated, dashboard /api/stt/transcribe POST 200 (authed, from backend). This is the full end-to-end STT validation.
+
+NOT done: backend NOT deployed, no reprocess, no secret handled, no push, no TTS/face. Stopped for backend redeploy approval.
