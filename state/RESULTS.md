@@ -573,3 +573,29 @@ COST: bogus probe cold-started btg-stt (now briefly running); min_replicas=0 so 
 ESCALATION (sharpened for Cerebrium): On project p-a907d7c5, app btg-stt (GPU ADA_L4, custom runtime, disable_auth=true), wss:// upgrades to ANY path (real @app.websocket route or nonexistent) are routed/logged as plain GET -> 404; /healthz GET works (200). The identical FastAPI @router.websocket + include_router pattern on our CPU app backtogether-backend negotiates WS correctly (real ws route logs 1006, nonexistent logs 403). What enables WS-upgrade proxying on a GPU custom-runtime app? Is it unsupported, or gated by a flag/config our backend has and btg-stt lacks?
 
 NOT done: backend NOT deployed, no reprocess/upload, no TTS/face, no push, no further spend test. min_replicas back at 0. STT blocked pending Cerebrium answer or an architectural transport change.
+
+## 2026-06-04T02:37:58Z — Drafted option B (HTTP transcribe for upload path). Verified all assumptions against source: header auth (X-Bridge-Auth), httpx house pattern, raw-body (no multipart dep), faster-whisper decodes path. NOT applied.
+Drafted the HTTP-transcribe fix for the upload/batch STT path (sidesteps the WS gateway 404). Every assumption verified read-only against source before finalizing. Nothing applied; awaiting Rob approval.
+
+WHY THIS WORKS: the blocked path is upload reprocess = batch transcription of a finite extracted .wav. It does not need WS streaming. A POST /api/stt/transcribe routes as normal HTTP (which the Cerebrium gateway proxies fine — /healthz GET 200, backend HTTP endpoints work), avoiding the WS-upgrade-not-proxied issue entirely.
+
+DRAFT (2 files + snapshot = 3 edit sites):
+1. bridge/services/stt.py (+ ops/cerebrium/stt/services/stt.py snapshot):
+   - import: add Request, Depends; add `from auth import require_bridge_auth` (HTTP variant; stt.py already does `from auth import require_bridge_auth_ws` at line 64, so path works; auth.py is flat in the snapshot dir — confirmed).
+   - add _transcribe_file_blocking(path, language): _whisper.transcribe(path, vad_filter=True, beam_size=1) -> (text, duration). faster-whisper decodes the file path itself (no client ffmpeg).
+   - add @router.post("/transcribe", dependencies=[Depends(require_bridge_auth)]) reading raw request.body() (NOT multipart -> avoids missing python-multipart dep), writes temp .wav, transcribes on a thread, returns {text, duration_s}. Lands at /api/stt/transcribe (prefix already committed d30301e).
+2. backend/app/services/clients/stt_bridge.py transcribe_file (line 248): rewrite to httpx POST base+"/api/stt/transcribe" with params={language}, content=<file bytes>, headers X-Bridge-Auth (mirrors tts_bridge/face_bridge _auth_headers + httpx.AsyncClient house pattern). timeout=1800 (35-min files). Returns obj["text"]. Raises on failure (processing.py captures).
+
+VERIFIED ASSUMPTIONS (read-only):
+- auth: HTTP bridge auth is HEADER-based require_bridge_auth (auth.py:44, X-Bridge-Auth Header), NOT ?bridge_auth= query (that's the WS variant). Client must send header. (Corrected from first draft.)
+- client lib: backend uses httpx==0.27.2 (tts/face/avatar bridges all import httpx). NOT aiohttp.
+- multipart: bridge toml has fastapi but NOT python-multipart -> UploadFile would crash. Raw request.body() avoids it. (Corrected.)
+- faster-whisper: _whisper.transcribe accepts a file PATH and decodes internally; vad_filter=True for whole-file.
+- WS path: KEEP /stream + open_stream + streaming machinery (realtime-call path uses it; separate concern). This change touches ONLY transcribe_file (upload path).
+- route reachability: /transcribe is POST -> gateway proxies normal HTTP (proven: /healthz GET 200). This is the crux of why it sidesteps the WS bug.
+
+OPEN/NOTE: 35-min file -> single _whisper.transcribe call on GPU; timeout 1800s client-side. faster-whisper handles long files (segments generator). Acceptable for batch. If too slow, chunk later (not now).
+
+NEXT (ROB approval): "apply it" -> executor applies 3 edits, shows greps/diff, commits (backtogether), then confirm-before-live redeploy btg-stt (new route) THEN backend (new client). Then ROB reprocess a fresh video -> executor verifies transcribed + segments>0.
+
+NOT done: nothing applied, no deploy, no reprocess, no TTS/face, no push. Draft only.
