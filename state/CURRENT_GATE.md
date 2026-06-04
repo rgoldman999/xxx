@@ -3,31 +3,36 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-The /api/stt prefix fix is FALSIFIED — /api/stt/stream still logs GET 404. Path-depth was not the cause. Next: test the scale-to-zero hypothesis (or escalate). STT blocked end-to-end.
+Both fixable hypotheses (path-depth, scale-to-zero) are FALSIFIED by deploy tests. The remaining verified difference between our working WS app and the broken one is CPU vs GPU runtime — a Cerebrium platform question. Next: escalate to Cerebrium support. STT blocked end-to-end.
 
-## Done / verified (RESULTS 02:14Z)
-- btg-stt redeployed with prefix fix (build-da6a8e30, live). /healthz 200.
-- /api/stt/stream -> dashboard Runs "GET 404" (19:13:18), same failure mode as bare /stream. PATH-DEPTH FALSIFIED.
-- Backend NOT deployed (HALT honored). No reprocess.
-- Code: prefix fix committed (backtogether d30301e) but ineffective. Recommend LEAVE (not wrong, just insufficient) unless Rob wants revert.
+## Done / verified
+- /api/stt prefix fix deployed -> /api/stt/stream STILL "GET 404". PATH-DEPTH FALSIFIED.
+- btg-stt min_replicas=1 (always-on) test -> /api/stt/stream STILL "GET 404" (19:20:42). SCALE-TO-ZERO FALSIFIED. Reverted to min_replicas=0, redeployed (build-ce08b0a7). toml back to committed baseline (git clean). Always-on window ~6 min.
+- disable_auth: ELIMINATED — BOTH apps have disable_auth=true (btg-stt toml:17, backend toml:7). Not the differentiator.
+- Router-vs-app mounting: already eliminated (backend uses @router+include_router, WS works).
 
-## Leading suspect now: scale-to-zero vs always-on
-- Working WS = backend, CPU, min_replicas=1 (always-on). Broken WS = btg-stt, GPU, min_replicas=0 (scale-to-zero).
-- The 404 hit an already-warm container (same as prior /healthz 200), failed fast (26ms) — not a naive cold-start drop. Possibly scale-to-zero apps get a sync-request routing profile that does not proxy WS upgrades. UNVERIFIED.
+## Verified remaining differentiator
+- WORKS: backtogether-backend — compute=CPU, min_replicas=1, disable_auth=true. /api/call/ws/{id} WS reaches container (Runs 1006).
+- FAILS: btg-stt — compute=ADA_L4 (GPU), tested min_replicas 0 AND 1, disable_auth=true. /stream AND /api/stt/stream both "GET 404"; /healthz 200.
+- Only remaining difference: CPU (works) vs GPU/ADA_L4 (fails) runtime. This is Cerebrium platform-internal -> escalate.
 
-## DECISION (Rob) — pick
-A. Test scale-to-zero: set btg-stt min_replicas=1 + redeploy, re-probe /api/stt/stream via Runs. Cleanest test of the suspect. COST: always-on ADA_L4 ~$0.80/hr (~$576/mo) — exceeds $100 ceiling, so SHORT test then revert to 0. ROB-ONLY (spend approval).
-B. Escalate to Cerebrium support: evidence now stronger (WS works on always-on CPU app, 404s on scale-to-zero GPU app, same project + same @router pattern). Definitive, slow.
-C. Both: A as fast test, B in parallel.
+## Next step — ROB-ONLY: Cerebrium support escalation (plan C leg B)
+- Send Cerebrium the evidence pack (RESULTS 02:28Z). Core question: why does a wss:// upgrade to a custom-runtime GPU app's @app.websocket route get routed/logged as a plain GET and 404'd to the container, while the identical pattern on our CPU app works? Is WS upgrade proxying unsupported/needs-a-flag on GPU custom runtimes?
+- Optional cheap test if Rob wants before/with support (NOT auto): does WS work on our OTHER GPU app (btg-llm-qwen-4b, AMPERE_A10) if it has any ws route? If no GPU app anywhere proxies WS, strongly implicates GPU runtime. (Read-only-ish; only if a ws route exists there.)
 
-## If A and it WORKS (WS reaches container on min_replicas=1)
-- Confirms scale-to-zero is the cause. Then the real tradeoff is cost: always-on ADA_L4 blows the $100 ceiling. Options to decide then: keep min_replicas=1 and accept spend; or find a Cerebrium scale-to-zero+WS config; or move STT transport off WS. DECISION for Rob/Jeannine.
+## Code state
+- /api/stt prefix fix committed (d30301e), ineffective alone, LEFT in place (harmless; reconcile path once real fix known).
+- toml reverted to min_replicas=0 (matches committed baseline; uncommitted net-zero diff = none).
+- Backend NOT deployed (still builds old /stream path; moot until a working fix exists).
 
 ## ROB-ONLY (carried)
-- min_replicas/spend change; Cerebrium escalation; backend redeploy; upload/reprocess; revert decision; TTS/face. No secret values read/set by executor.
+- Cerebrium escalation; any further min_replicas/spend test; backend deploy; upload/reprocess; transport/arch decision; TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No min_replicas/spend change without explicit Rob approval. No backend deploy / reprocess until /api/stt/stream (or whatever path) returns non-404. No push unless asked. No TTS/face.
+No further deploy/spend test without explicit approval. No backend deploy / reprocess until a path returns non-404 (WS reaches container). No push unless asked. No TTS/face.
+
+## Architectural fallback (if Cerebrium confirms GPU custom-runtime WS unsupported)
+- Move STT off streaming WS: e.g. batch/chunked HTTP transcribe endpoint on the GPU app (Cerebrium docs: Streaming + REST endpoints), with the backend posting audio and receiving transcript. Larger change to bridge + client. DECISION for Rob/Jeannine.
 
 ---
 
