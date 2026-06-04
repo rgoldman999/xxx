@@ -396,3 +396,29 @@ PROPOSED next action (to PROPOSE only; nothing applied):
 - Optional toml alignment to mirror docs exactly (low confidence it matters): set entrypoint to the uvicorn string-array form ["uvicorn","main_stt:app","--host","0.0.0.0","--port","8003"] and add readycheck_endpoint="/healthz". Small toml change = AUTO-RUN draft + show-diff; deploy = confirm-before-live. NOT applied.
 
 NOT done: no code/toml change, no deploy, no retry, no secret/env change, no upload/reprocess, no TTS/face.
+
+## 2026-06-04T01:53:36Z — Unchanged redeploy did NOT fix /stream 404. STOP per gate -> Cerebrium support escalation. Key: edge returns WS 101 but Cerebrium routing logs /stream as GET 404 — upgrade not reaching container.
+Rob approved + executed option 1 (unchanged redeploy, confirm-before-live). Result: /healthz 200, /stream still 404. Did NOT fix it. STOP condition from the gate met -> prepare Cerebrium support escalation. No toml/code change, no retry, no second redeploy.
+
+DEPLOY (unchanged, verified):
+- toml clean since 46d523a (no code/toml change). Custom-runtime block intact: port=8003, entrypoint=["python3","-u","main_stt.py"], healthcheck_endpoint=/healthz.
+- Redeploy build-0844d7dd LIVE; clean startup (whisper+VAD loaded, uvicorn on 0.0.0.0:8003, auth_secret_set=True).
+
+SMOKE:
+- /healthz -> HTTP 200 (33.6s cold start; scale-to-zero). model ready, cuda, int8_float16. PASS.
+- /stream: WS upgrade probe (read-only handshake, no audio) -> socket-level HTTP/1.1 101 Switching Protocols (server: envoy). BUT dashboard Runs logged that exact request (18:52:02) as: /stream GET -> 404 (container 6fc5668ff7-kgdk9, 16ms). FAIL.
+
+KEY INSIGHT (resolves the 101-vs-404 discrepancy):
+- The 101 is the EDGE/Envoy completing a WS handshake at the gateway edge. Cerebrium's request-routing layer still records & routes /stream as a plain GET that 404s. The upgrade does NOT reach the container's @router.websocket("/stream"). So a socket-level 101 is NOT proof of end-to-end WS; the dashboard Runs 404 is the authoritative signal. This is why earlier direct 101 probes coexisted with backend 404s.
+- Unchanged redeploy proves it is NOT a stale-revision / custom-runtime-not-applied issue: fresh revision, same 404. 
+
+CONCLUSION: WS is documented-supported on v4 + our config/URL/bind valid, yet Cerebrium routes /stream as GET->404 to the container. This is a Cerebrium platform routing behavior we cannot resolve from the repo. ESCALATE to Cerebrium support.
+
+ESCALATION EVIDENCE PACK (for Rob to send Cerebrium support/Discord):
+- App: btg-stt (project p-a907d7c5, us-east-1, ADA_L4, custom runtime).
+- toml runtime: [cerebrium.runtime.custom] port=8003, entrypoint=["python3","-u","main_stt.py"], healthcheck_endpoint="/healthz". FastAPI app (main_stt.py) includes @router.websocket("/stream") (no prefix) + @router.get("/healthz").
+- Symptom: GET https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/btg-stt/healthz -> 200. WS wss://.../v4/p-a907d7c5/btg-stt/stream -> dashboard Runs shows "/stream GET 404" though a raw TLS WS handshake returns 101 at the edge (server: envoy).
+- Dashboard Runs rows: /stream GET 404 at 18:52:02 (build-0844d7dd, container 6fc5668ff7-kgdk9); /healthz GET 200 at 18:51:09 same container; same pattern pre-redeploy (18:15:30, 15:53:25).
+- Question for Cerebrium: why is a wss:// request to a custom-runtime app's @app.websocket route routed/logged as a plain GET and returned 404 to the container? Is there a required flag/config for WS upgrade proxying on v4 sync endpoints, or a different endpoint host/path for WS?
+
+NOT done: no toml/code change, no retry of 294c44ea, no second redeploy, no upload/reprocess, no TTS/face. STT blocked pending Cerebrium support answer.
