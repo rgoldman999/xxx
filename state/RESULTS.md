@@ -442,3 +442,36 @@ CONFIDENCE: two plausible hypotheses, NEITHER confirmed. Not asserting a fix. De
 DECISION NEEDED (Rob): (A) escalate to Cerebrium support with the evidence pack (RESULTS 01:53Z) + these two leads, OR (B) let executor DRAFT lead #1 (and/or #2) as a show-diff for approval, then a confirm-before-live redeploy to test. Both are valid; A is lower-risk/definitive, B is faster if the hypothesis holds.
 
 NOT done: no code change, no toml change, no route rename, no deploy, no retry, no upload/reprocess, no TTS/face. Per scope: stopped before any code/toml/deploy.
+
+## 2026-06-04T02:03:10Z — BREAKTHROUGH (verified): backend WS route /api/call/ws/{id} WORKS through gateway (logged 1006 WS-close); btg-stt bare /stream does NOT (404). Differentiator = nested path vs bare single-segment. Both use @router+include_router, so router-mount eliminated.
+Found a WORKING WebSocket precedent in our OWN backend, proving WS works on our v4 apps and isolating the differentiator. This eliminates the two prior leads and gives an evidence-backed (not certain) fix.
+
+DECISIVE TEST (read-only WS probes + backend dashboard Runs):
+- Probed backend's own ws route. Dashboard Runs logged:
+  - /api/call/ws/test-probe (REAL route, prefix /api/call) -> STATUS 1006 (WebSocket close code) — upgrade REACHED the container; @router.websocket("/ws/{call_id}") ran and closed (no-auth -> websocket.close(4001), surfaced as 1006). 
+  - /call/ws/test-probe and /ws/test-probe (non-routes) -> 403.
+- Contrast btg-stt: /stream -> "/stream GET 404" (upgrade NOT reaching container).
+- (All returned edge-101 at the socket; the dashboard status is authoritative. Edge-101 even on non-routes => socket-101 is meaningless for routing, as established.)
+
+=> WebSockets DO work on our Cerebrium v4 apps. The backend's WS upgrade reaches its container; btg-stt's does not.
+
+ELIMINATED (verified, not hypothesis):
+- Router-vs-app mounting (prior lead #1): BACKEND also uses @router.websocket + app.include_router (call.py:417, main.py:188) and its WS WORKS. So @router+include_router is NOT the cause.
+- "/ws magic path" (Google claim): already disproven; backend route is /ws/{call_id} under /api/call prefix, arbitrary.
+
+VERIFIED DIFFERENTIATOR (source):
+- Backend working WS route: call.router mounted prefix="/api/call" (main.py:188) -> path /api/call/ws/{call_id} (multi-segment, nested).
+- btg-stt broken WS route: include_router(stt_svc.router) NO prefix (main_stt.py:77) -> bare single-segment /stream. (btg-stt /healthz is also bare + works, but it's GET, not WS.)
+- Difference: working WS = nested multi-segment path; broken WS = bare single-segment path.
+
+HONEST CAVEAT (NOT proven causal): path-depth is the cleanest difference, but other uncontrolled differences exist between the two apps — backend is CPU + min_replicas=1 (always-on); btg-stt is GPU(ADA_L4) + min_replicas=0 (scale-to-zero). Cannot fully exclude that the gateway's WS upgrade handling differs for scale-to-zero/GPU apps vs always-on CPU apps. Path-depth is the lowest-risk first fix; if it fails, the next suspect is scale-to-zero.
+
+PROPOSED FIX (to DRAFT as show-diff; NOT applied; needs Rob approval + confirm-before-live redeploy):
+- Mirror the backend's working pattern: give the STT bridge router a prefix so the WS route is multi-segment, e.g. include_router(stt_svc.router, prefix="/api/stt") -> route /api/stt/stream (or /v1/stream). 
+- Update backend client _ws_url_from (stt_bridge.py:56-72) to build the new path.
+- Two small reversible edits; no STT logic change. healthz can stay or move with it.
+- Then confirm-before-live redeploy btg-stt + backend; re-test /stream-equivalent via dashboard Runs (expect a WS-close status, not GET 404), then a real reprocess.
+
+ALTERNATIVE if path-depth fails: set btg-stt min_replicas=1 (always-on, ROB-ONLY spend ~$576/mo — exceeds $100 ceiling, so only as a SHORT test then revert) to test the scale-to-zero hypothesis; or escalate.
+
+NOT done: no code/toml change, no deploy, no retry, no upload/reprocess, no TTS/face. Decision + draft-approval needed.
