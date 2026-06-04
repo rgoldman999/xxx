@@ -235,3 +235,33 @@ NEXT GATE (ROB-ONLY trigger, then AUTO-RUN verify):
 Do NOT reuse the old file:// ellis videos (they are not in R2; re-uploading fresh is required). Do NOT blind-retry them.
 
 NOT done: no executor upload/reprocess, no TTS/face. STT bridge still not yet exercised end-to-end (no video has reached it).
+
+## 2026-06-04T01:20:08Z — STT end-to-end attempt: r2:// video reached audio_extracted then FAILED at diarize/STT with EMPTY error — needs Rob log/inspect
+First r2:// video reprocess got FURTHER than ever (extracted audio from r2:// source) then failed at the diarize/STT step with NO persisted error. Exact cause not obtainable read-only (bridge/backend logs not retrievable; richer detail is owner-authed). HALT, no blind retry.
+
+PROGRESS (this is new — prior videos never got here):
+- New video 294c44ea (persona 14578822), storage_uri=r2:// (durable). 
+- Advanced past prior failure modes: reached stage=audio_extracted with audio_duration_seconds=2085.94 (audio extraction from r2:// SUCCEEDED; ~35 min track). No errno-111, no FileNotFound.
+
+FAILURE (verified read-only DB, db 01:16:51Z):
+- status=failed, stage=audio_extracted, error_message=EMPTY, transcript_len=0, speech_seconds=0, speakers=0, source_speaker_segments=0. updated 01:16:00.
+- So it failed AFTER audio extraction, at the diarize/transcribe (STT bridge) step, but no error string was persisted.
+
+CODE PATH (processing.py read-only):
+- After audio_extracted: silence gate (skip if duration<30 OR mean_db<-45). duration=2085s passes the duration check; would only skip if audio < -45dB (then it would go to 'transcribed', not 'failed') — so silence gate is NOT the failure.
+- Else diarize_and_transcribe -> stt_bridge.transcribe_file; on exception it RE-RAISES, and the comment says the outer process_source handler captures it into source.error_message.
+- CONTRADICTION: row failed at this step but error_message is EMPTY. Either the outer handler isn't persisting the message on this path, or failure is elsewhere. DB cannot reveal which.
+
+DIAGNOSIS BLOCKED read-only:
+- btg-stt logs and backend logs not retrievable this session (cerebrium logs flaky — returns empty).
+- Richer per-source fields are behind owner-authed GET /api/upload/_inspect/{source_id}.
+
+NEXT (ROB-ONLY, to get the actual error — pick any):
+1. Rob: GET {backend_base}/api/upload/_inspect/294c44ea-9784-42eb-988a-701a11d7c448 (authed) -> report processing fields / any error detail.
+2. Rob: dashboard -> backtogether-backend App Logs around 01:15-01:16 -> find the diarize/STT exception (and btg-stt App Logs for whether a /stream request arrived).
+3. Likely candidates to look for in logs (NOT assumed): stt_bridge could not fetch the r2:// audio (does the bridge have R2 access, or does the backend stream bytes to it?); WS auth mismatch; transcribe_file timeout on a 35-min file; or an exception before error_message is written.
+Do NOT blind-retry 294c44ea until the error is known.
+
+NOTE: console error Rob saw ("listener indicated async response... message channel closed") is a browser-EXTENSION message, unrelated to backend/STT.
+
+NOT done: STT still not validated end-to-end (failed at STT step, cause unknown). No TTS/face. No retry.
