@@ -3,32 +3,31 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Deploy the /api/stt prefix fix and verify it resolves the /stream 404. Code APPLIED + COMMITTED (not deployed). Awaiting confirm-before-live deploy approval — btg-stt FIRST, then backend.
+The /api/stt prefix fix is FALSIFIED — /api/stt/stream still logs GET 404. Path-depth was not the cause. Next: test the scale-to-zero hypothesis (or escalate). STT blocked end-to-end.
 
-## Done (RESULTS 02:08Z)
-- Applied 3 edits (prefix /api/stt on bridge + snapshot; backend _ws_url_from -> /api/stt/stream). Verified greps + diff; only 3 files changed.
-- Committed: backtogether repo, branch main, hash d30301e. Tree clean. NOT pushed (commit only, per scope).
-- Net: ws route /stream -> /api/stt/stream; bare /healthz (Cerebrium healthcheck) unchanged.
+## Done / verified (RESULTS 02:14Z)
+- btg-stt redeployed with prefix fix (build-da6a8e30, live). /healthz 200.
+- /api/stt/stream -> dashboard Runs "GET 404" (19:13:18), same failure mode as bare /stream. PATH-DEPTH FALSIFIED.
+- Backend NOT deployed (HALT honored). No reprocess.
+- Code: prefix fix committed (backtogether d30301e) but ineffective. Recommend LEAVE (not wrong, just insufficient) unless Rob wants revert.
 
-## Next step — ROB-ONLY confirm-before-live, IN ORDER
-1. Redeploy btg-stt FIRST (snapshot has the prefix; new route /api/stt/stream must exist before the client points at it).
-   - cmd: cd ops/cerebrium/stt && cerebrium deploy --config-file ./cerebrium.toml (logged bg)
-   - smoke: /healthz 200; WS probe to /api/stt/stream -> dashboard Runs WS-close status (NOT GET 404).
-   - HALT if /api/stt/stream still logs GET 404 -> path-depth disproven; do not deploy backend; test min_replicas=1 or escalate.
-2. THEN redeploy backend (client now builds /api/stt/stream).
-   - smoke: /api/health 200.
-   - Order rationale: stt-first avoids a transient window where backend calls /api/stt/stream on an stt that still only serves /stream.
-3. After both live (AUTO-RUN verify): real reprocess of a fresh video [ROB-ONLY trigger] -> audio_extracted -> transcribed, source_speaker_segments>0, dashboard /api/stt/stream WS activity.
+## Leading suspect now: scale-to-zero vs always-on
+- Working WS = backend, CPU, min_replicas=1 (always-on). Broken WS = btg-stt, GPU, min_replicas=0 (scale-to-zero).
+- The 404 hit an already-warm container (same as prior /healthz 200), failed fast (26ms) — not a naive cold-start drop. Possibly scale-to-zero apps get a sync-request routing profile that does not proxy WS upgrades. UNVERIFIED.
+
+## DECISION (Rob) — pick
+A. Test scale-to-zero: set btg-stt min_replicas=1 + redeploy, re-probe /api/stt/stream via Runs. Cleanest test of the suspect. COST: always-on ADA_L4 ~$0.80/hr (~$576/mo) — exceeds $100 ceiling, so SHORT test then revert to 0. ROB-ONLY (spend approval).
+B. Escalate to Cerebrium support: evidence now stronger (WS works on always-on CPU app, 404s on scale-to-zero GPU app, same project + same @router pattern). Definitive, slow.
+C. Both: A as fast test, B in parallel.
+
+## If A and it WORKS (WS reaches container on min_replicas=1)
+- Confirms scale-to-zero is the cause. Then the real tradeoff is cost: always-on ADA_L4 blows the $100 ceiling. Options to decide then: keep min_replicas=1 and accept spend; or find a Cerebrium scale-to-zero+WS config; or move STT transport off WS. DECISION for Rob/Jeannine.
 
 ## ROB-ONLY (carried)
-- Approve each redeploy (confirm-before-live, separately); push (if wanted); upload/reprocess; min_replicas/spend; TTS/face. No secret values read/set by executor.
+- min_replicas/spend change; Cerebrium escalation; backend redeploy; upload/reprocess; revert decision; TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No deploy without explicit confirm-before-live (btg-stt and backend separately). No push unless Rob asks. No retry of 294c44ea until /api/stt/stream non-404. No upload/reprocess by executor. No TTS/face.
-
-## Follow-on (NOT now)
-- TTS/avatar bridges already use nested ws paths (/tts/stream, /avatar/stream) — only one level deep. If /api/stt/stream works but a one-level path wouldn't, may need /api/tts/stream etc. Re-evaluate at TTS bring-up. Flagged, not acted on.
-- Small fix (draft later): STT bridge call attach a message so error string never blank.
+No min_replicas/spend change without explicit Rob approval. No backend deploy / reprocess until /api/stt/stream (or whatever path) returns non-404. No push unless asked. No TTS/face.
 
 ---
 
