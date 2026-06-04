@@ -1,10 +1,10 @@
 # NEXT REPLY
 
-status: PENDING
+status: CONSUMED
 updated_at: 2026-06-04T04:35:00Z
-consumed_at:
-consumed_by:
-gate_commit: 099c822
+consumed_at: 2026-06-04T04:34:06Z
+consumed_by: claude-executor
+gate_commit: 5495e05
 classification_hint: AUTO-RUN diagnose downstream provider/key usage; ROB-ONLY secrets if needed
 
 ## body
