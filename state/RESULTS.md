@@ -547,3 +547,29 @@ ESCALATION TO CEREBRIUM (plan C leg B — now the path) — evidence pack:
 CODE STATE: /api/stt prefix fix still committed (d30301e), still ineffective alone; LEFT in place (harmless). toml reverted to min_replicas=0 (uncommitted net-zero; matches committed baseline).
 
 NOT done: backend NOT deployed, no reprocess/upload/retry, no TTS/face, no push. Always-on reverted. STT blocked pending Cerebrium answer (or a disable_auth test if Rob approves).
+
+## 2026-06-04T02:33:57Z — GPU-app WS diagnostic: qwen has NO ws route (vLLM HTTP-only) so GPU-vs-CPU stays n=1. But btg-stt bogus-path test PROVES app-wide WS-upgrade non-proxying: real route + bogus path BOTH log GET 404 (backend distinguished them: 1006 vs 403).
+Ran the GPU-app WS diagnostic (read-only). Could not strengthen GPU-vs-CPU (no second GPU app has a ws route), but a bogus-path comparison on btg-stt proved the failure is app-wide WS-upgrade non-proxying, route-independent.
+
+APP INVENTORY (verified, only 3 deployed apps):
+- backtogether-backend: CPU, ws route /api/call/ws/{id} -> WS WORKS (1006).
+- btg-llm-qwen-4b: GPU AMPERE_A10, vLLM HTTP/OpenAI only, NO ws route -> cannot test WS here.
+- btg-stt: GPU ADA_L4, ws route /api/stt/stream -> 404.
+=> No second GPU-app-with-ws exists; GPU-vs-CPU remains a correlation (n=1 each side), NOT a proven mechanism. Did not overstate.
+
+BOGUS-PATH TEST (the informative part, btg-stt, read-only):
+- WS probe to /api/stt/does-not-exist-zzz (no such route) -> dashboard Runs: GET 404 (19:31:47, 35.9s cold start).
+- WS probe to /api/stt/stream (real route) -> GET 404 (19:20:42).
+- BOTH identical: GET 404. 
+- CONTRAST backend: bogus path -> 403; real ws route -> 1006 (WS-close). Backend gateway DISTINGUISHES ws-upgrade from non-route.
+- CONCLUSION (proven): btg-stt's gateway does NOT negotiate the WS upgrade for ANY path — it forwards everything as plain GET, so no @websocket route can ever match -> 404. Failure is APP-WIDE WS-upgrade non-proxying on btg-stt, independent of route name, path depth, scale-to-zero/always-on (all tested).
+
+WHAT'S PROVEN vs NOT:
+- PROVEN: btg-stt does not proxy WS upgrades at all; backend (CPU) does.
+- NOT PROVEN: that GPU runtime per se is the cause (no GPU+ws control app). Could be GPU runtime, or a per-app gateway/runtime config difference between how btg-stt vs backend were created/deployed.
+
+COST: bogus probe cold-started btg-stt (now briefly running); min_replicas=0 so it scales back to 0 on cooldown. No lingering spend.
+
+ESCALATION (sharpened for Cerebrium): On project p-a907d7c5, app btg-stt (GPU ADA_L4, custom runtime, disable_auth=true), wss:// upgrades to ANY path (real @app.websocket route or nonexistent) are routed/logged as plain GET -> 404; /healthz GET works (200). The identical FastAPI @router.websocket + include_router pattern on our CPU app backtogether-backend negotiates WS correctly (real ws route logs 1006, nonexistent logs 403). What enables WS-upgrade proxying on a GPU custom-runtime app? Is it unsupported, or gated by a flag/config our backend has and btg-stt lacks?
+
+NOT done: backend NOT deployed, no reprocess/upload, no TTS/face, no push, no further spend test. min_replicas back at 0. STT blocked pending Cerebrium answer or an architectural transport change.
