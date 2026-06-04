@@ -3,34 +3,38 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Diagnosis converged: btg-stt's gateway does NOT proxy WS upgrades for ANY path (app-wide), while our CPU backend's does. Path-depth, scale-to-zero, disable_auth, router-mounting all eliminated. Next: Cerebrium escalation (sharpened) and/or architectural transport change. STT blocked end-to-end.
+Unblock upload-time STT via an HTTP POST transcribe endpoint (sidesteps the WS gateway 404, which is confirmed app-wide on btg-stt). Draft DONE + verified against source. Awaiting Rob approval to apply + deploy.
 
-## Proven (verified)
-- btg-stt: wss upgrade to real route /api/stt/stream AND to a bogus path BOTH log "GET 404" (19:31 bogus, 19:20 real). Gateway forwards every path as plain GET -> no @websocket route matches -> 404. App-wide WS non-proxying.
-- backend (CPU): real ws route /api/call/ws/{id} -> 1006 (WS reaches container); bogus -> 403. Gateway negotiates WS. WS WORKS.
-- Eliminated by tests: path-depth (prefix fix 404), scale-to-zero (min_replicas=1 404, reverted), disable_auth (both apps true), router-vs-app mount (backend same pattern works).
-- NOT proven: GPU-runtime as the mechanism — qwen GPU app is vLLM HTTP-only (no ws route), so no GPU+ws control. GPU-vs-CPU is n=1 each side.
+## Why HTTP (recap)
+Upload reprocess = batch transcription of a finite .wav -> no streaming needed. POST /api/stt/transcribe routes as normal HTTP (gateway proxies it; /healthz GET 200 proves HTTP works), avoiding the WS-upgrade-not-proxied bug entirely. Realtime-call WS is a separate, still-open concern (not this gate).
 
-## Code/infra state
-- /api/stt prefix fix committed (d30301e), ineffective alone, LEFT in place.
-- btg-stt min_replicas back to 0 (toml = committed baseline; deployed build-ce08b0a7). Bogus probe cold-started it; scales to 0 on cooldown. No lingering spend.
-- backend NOT deployed.
+## Drafted (RESULTS 02:37Z) — 3 edit sites, verified, NOT applied
+1. bridge/services/stt.py + ops/cerebrium/stt/services/stt.py (snapshot):
+   - imports: add Request, Depends + `from auth import require_bridge_auth` (HTTP header auth; stt.py already imports require_bridge_auth_ws at line 64 — path confirmed).
+   - add _transcribe_file_blocking(path, language) (faster-whisper decodes path, vad_filter=True).
+   - add @router.post("/transcribe", Depends(require_bridge_auth)) reading raw request.body() (no multipart -> no missing python-multipart dep), temp file, transcribe on thread, return {text,duration_s}. Lands at /api/stt/transcribe (prefix already committed d30301e).
+2. backend stt_bridge.transcribe_file (line 248): rewrite to httpx POST /api/stt/transcribe, params={language}, content=<bytes>, X-Bridge-Auth header (house pattern), timeout=1800. Returns text; raises on failure.
+   - KEEP WS /stream + open_stream (realtime path); change ONLY transcribe_file.
+
+## Verified assumptions (read-only)
+- HTTP auth = header X-Bridge-Auth (auth.py:44), not ?query (corrected). Client sends header.
+- Backend uses httpx (not aiohttp). Mirrors tts/face bridge.
+- Raw body avoids missing python-multipart in bridge toml.
+- faster-whisper transcribes a file path directly.
+- POST route reachability proven by /healthz GET 200 + working backend HTTP.
 
 ## Next step — ROB DECISION
-A. ESCALATE to Cerebrium (sharpened evidence in RESULTS 02:33Z): why does a GPU custom-runtime app (btg-stt, disable_auth=true) route ALL wss upgrades as plain GET->404 while our CPU app with the identical FastAPI pattern negotiates WS? Is GPU custom-runtime WS unsupported or flag-gated?
-B. ARCHITECTURAL transport change (does not wait on Cerebrium): move STT off streaming WS. Options to scope:
-   - Add a non-WS HTTP transcribe endpoint on btg-stt (POST audio -> JSON transcript); backend posts the extracted wav and gets text. Loses streaming/partial, fine for upload-time batch transcription (the failing path is upload reprocess of a finite file, NOT realtime). LARGEST leverage: upload-time STT does not need streaming at all.
-   - Realtime call path would still want WS later, but that is a separate (also-blocked) concern; upload transcription can ship via HTTP POST.
-   This is a DECISION (Rob/Jeannine) + a code change (bridge adds HTTP route; backend client adds HTTP call) = AUTO-RUN draftable, gated deploy.
-
-## Recommendation (for Rob to weigh, not auto)
-- Upload-time transcription (the currently-blocked path) does NOT need WebSockets — it is batch transcription of a finite extracted wav. A simple HTTP POST transcribe endpoint on btg-stt sidesteps the WS gateway issue entirely and unblocks STT validation now, without waiting on Cerebrium. Realtime-call WS can be solved separately later.
+"apply it" -> executor: apply 3 edits, show greps/diff, commit (backtogether), then confirm-before-live redeploy btg-stt FIRST (new route exists) THEN backend (client posts to it). Then Rob reprocess a fresh video -> executor verifies read-only: audio_extracted -> transcribed, source_speaker_segments>0, dashboard /api/stt/transcribe POST 200.
 
 ## ROB-ONLY (carried)
-- Cerebrium escalation; approve any transport/code change (show-diff) + deploy (confirm-before-live); upload/reprocess; spend; TTS/face. No secret values read/set by executor.
+- Approve apply + commit; redeploy (confirm-before-live, btg-stt then backend); upload/reprocess; Cerebrium escalation (parallel, optional); TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No code change without show-diff + approval. No deploy without confirm-before-live. No backend deploy/reprocess until a working transcribe path exists. No further spend test without approval. No push unless asked. No TTS/face.
+No edits applied / no commit without "apply it". No deploy without confirm-before-live. No reprocess until both deployed. No push unless asked. No TTS/face.
+
+## Follow-on
+- Realtime-call WS (/stream) still blocked by the same gateway issue — needs Cerebrium answer or a non-WS realtime design later. Upload path does NOT depend on it.
+- TTS/avatar bridges also stream over WS -> will hit the same gateway wall; same HTTP-vs-WS evaluation applies at their bring-up.
 
 ---
 
