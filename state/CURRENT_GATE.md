@@ -3,33 +3,30 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Fix the /stream 404. Docs research done: Cerebrium v4 DOES support WebSockets (custom runtime); our URL shape, uvicorn bind, entrypoint, and healthcheck are all valid per docs. The 404 is platform/deploy-layer — the WS upgrade reaches the gateway as a plain GET. STT still not validated end-to-end.
+STT /stream returns 404 at Cerebrium's routing layer despite valid WS config. Unchanged redeploy did NOT fix it. Next: Cerebrium support escalation (ROB-ONLY) OR a transport decision. STT blocked end-to-end.
 
-## Docs research — DONE (RESULTS 01:44Z; sources in RESULTS)
-- WS supported on v4 via [cerebrium.runtime.custom]. URL: wss://api.aws.<region>.cerebrium.ai/v4/<project>/<app>/<ws-route>. Ours wss://.../btg-stt/stream is CORRECT.
-- Eliminated (docs + source): WS-unsupported (no), wrong URL (no), bad bind/entrypoint (no — uvicorn 0.0.0.0:8003, /healthz 200), readycheck missing (no — TCP fallback is valid), entrypoint list form (no — valid).
-- Remaining cause (NOT guessed as fact): deployed revision may not have applied the custom runtime, OR an undocumented Cerebrium WS proxying nuance. Needs a clean redeploy test and/or Cerebrium support.
+## Done / verified (RESULTS 01:53Z)
+- Unchanged redeploy (option 1, Rob-approved) build-0844d7dd LIVE; clean startup; toml unchanged (46d523a).
+- Smoke: /healthz 200 (cold start 33.6s). /stream: edge WS handshake returns 101 (server: envoy) BUT dashboard Runs logs the request as "/stream GET 404" (18:52:02, container 6fc5668ff7-kgdk9). Same as pre-redeploy.
+- KEY: the 101 is edge-level; Cerebrium routing records/routes /stream as a plain GET -> 404, upgrade NOT reaching the container ws route. A socket 101 is NOT proof of e2e WS; the Runs 404 is authoritative. Redeploy rules out stale-revision/custom-runtime-not-applied.
+- => NOT a repo-fixable issue. Escalate to Cerebrium.
 
-## Proposed next step (NEEDS ROB APPROVAL — deploy involved)
-1. (confirm-before-live) Redeploy btg-stt UNCHANGED to ensure the current custom-runtime toml is the ACTIVE revision. Then re-test /stream via dashboard Runs (read-only).
-   - target: app btg-stt (p-a907d7c5), env prod. scope: redeploy only, no toml/code change.
-   - command: cd ops/cerebrium/stt && cerebrium deploy --config-file ./cerebrium.toml  (logged bg, as before)
-   - smoke: /healthz 200 + dashboard Runs shows a fresh /stream attempt result.
-   - rollback/stop: prior revision remains; if /stream still 404, STOP and escalate to Cerebrium support (do not loop redeploys).
-2. If still 404 after a clean redeploy: ROB escalates to Cerebrium (support/Discord) with Runs evidence (/healthz 200 vs /stream GET 404), OR we revisit transport. Architectural fallback (DECISION, Rob/Jeannine): move STT off streaming WS to a non-WS path if Cerebrium WS proves unworkable.
-3. Optional low-confidence toml alignment (only if Rob wants to try before support): entrypoint -> ["uvicorn","main_stt:app","--host","0.0.0.0","--port","8003"] + readycheck_endpoint="/healthz". Small toml change = AUTO-RUN draft + show-diff; deploy = confirm-before-live.
+## Next step — ROB-ONLY: Cerebrium support escalation
+- Rob sends Cerebrium (support/Discord) the escalation evidence pack recorded in RESULTS 01:53Z. Core question: why is a wss:// request to a custom-runtime app's @app.websocket route routed/logged as a plain GET and 404'd to the container on v4? Required flag/config for WS upgrade proxying, or different host/path for WS?
+- Until Cerebrium responds, STT end-to-end is blocked. Do NOT loop redeploys. Do NOT retry 294c44ea.
 
-## Why this is a checkpoint, not auto-run
-The only remaining executor action is a redeploy (confirm-before-live by policy). Everything diagnosable read-only is done.
+## Parallel options (Rob/Jeannine decision, NOT executor-initiated)
+- If Cerebrium WS proves unworkable on v4 sync apps: architectural fallback — move STT off streaming WS to a non-WS/batch transcribe path, OR a different transport/host. This is a DECISION, not an executor fix. Would touch bridge + backend client (transport change), gated.
+
+## Productive work available WITHOUT STT (if Rob wants to proceed elsewhere)
+- Independent small code fix (AUTO-RUN draft + show-diff): make transcribe_file/open_stream attach a message so error_message is never blank. (Does not need /stream working.)
+- NOTE: TTS bridge bring-up would hit the SAME Cerebrium WS question if TTS streams over WS — verify TTS transport before committing GPU spend. Do not start TTS until the WS routing answer is known (avoids repeating this blocker on a paid GPU).
 
 ## ROB-ONLY (carried)
-- Approve redeploy; Cerebrium support escalation; architectural transport decision; secret/url value changes; upload/reprocess; TTS/face. No secret values read/set by executor.
+- Cerebrium support escalation; transport/architecture decision; any redeploy (confirm-before-live); secret/url changes; upload/reprocess; TTS/face GPU. No secret values read/set by executor.
 
 ## Hard constraints
-No deploy without explicit Rob approval (confirm-before-live). No code/toml change without show-diff + approval. No retry of 294c44ea until /stream returns non-404. No upload/reprocess/authed-call by executor. No TTS/face.
-
-## Note
-- Independent small fix worth doing later: make transcribe_file/open_stream attach a message so the failure's error string is never blank.
+No second redeploy / no toml/code change without show-diff + approval. No retry of 294c44ea until /stream returns non-404. No upload/reprocess/authed-call by executor. No TTS/face.
 
 ---
 
