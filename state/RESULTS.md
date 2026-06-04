@@ -730,3 +730,32 @@ DRAFT PLAN blocker 1 (NOT applied; AUTO-RUN draftable, show-diff on approval):
 - Open Q for Rob: which provider should extraction use — Qwen (LLM_PROVIDER=qwen) or OpenAI? llm_client default is OpenAI; stack decision #19 says Qwen local. Rob/Jeannine confirm; the code becomes provider-agnostic either way.
 
 NOT done: no code change, no deploy, no reprocess, no credential handled, no push, no TTS/face. Did not ask Rob for an Anthropic credential (per Rob: not using Claude).
+
+## 2026-06-04T04:36:58Z — Gate A DRAFTED (Qwen): persona_builder rewrite to get_llm_client(qwen) — show-diff only, NOT applied. No Anthropic, no ANTHROPIC key. Flag: verify backend qwen base_url/token set before deploy.
+Drafted Gate A per Rob (Qwen). persona_builder.py rewrite to the provider-agnostic client. Verified interface against llm_client.py + conversation.py. Show-diff only; nothing applied.
+
+DRAFT (1 file: backend/app/services/persona_builder.py):
+1. Imports: remove the Anthropic SDK import + the module-level Anthropic client; add `from app.services.llm_client import get_llm_client` + `import asyncio`.
+2. extract_persona_data: replace client.messages.create(model=claude-sonnet-4...) with:
+   llm = get_llm_client("qwen"); response = await loop.run_in_executor(None, lambda: llm.complete(model="gpt-4o-mini", max_tokens=4096, messages=[{system:EXTRACTION_PROMPT},{user:...text[:15000]}]))
+   (forces Qwen regardless of global llm_provider; QwenLLM maps the model id to the served Qwen model. Sync .complete wrapped in executor, mirrors conversation.py.)
+3. Response read: response_text = (response.choices[0].message.content or "").strip()  (was response.content[0].text).
+- UNCHANGED: EXTRACTION_PROMPT text; JSON-array parsing; return [] on parse failure (non-fatal); re-raise on API failure.
+
+HONORS DIRECTION:
+- No Anthropic/Claude anywhere; no ANTHROPIC credential referenced; module-level Anthropic client deleted (import no longer constructs it).
+- Qwen via get_llm_client("qwen") (stack #19).
+- transcript_text preserved + STT completes: transcript_text committed at processing.py:228 BEFORE extraction; this only fixes the extraction call. Parse-fail still returns [] (graceful).
+- Gate B (diarization/pyannote/HF token) NOT touched.
+
+INTERFACE VERIFIED (read-only):
+- get_llm_client("qwen") -> QwenLLM(base_url from qwen_base_url, credential from qwen_api_token, served_model from qwen_model). config has all (config.py:38-41).
+- .complete(**kwargs) sync, OpenAI shape; conversation.py pattern: run_in_executor + response.choices[0].message.content (conv lines 95-104).
+
+FLAGS before deploy (NOT addressed now; diff-only per Rob):
+1. Backend must have QWEN_BASE_URL + QWEN_API_TOKEN set or QwenLLM raises ValueError / call fails -> would trade the Anthropic 401 for a Qwen connection error. Memory says Qwen routing verified (D-2) + btg-llm-qwen-4b deployed, but backend qwen base_url/token presence NOT re-verified for this path. Do a name-only secrets check before redeploy.
+2. model="gpt-4o-mini" is intentional (QwenLLM ignores + uses served model), matches conversation.py; not an OpenAI dependency.
+
+NEXT (ROB): "apply it" -> executor applies the 3 edits to persona_builder.py, shows greps/py_compile, commits (backtogether). Then (before redeploy) name-only check QWEN_BASE_URL/QWEN_API_TOKEN present; then confirm-before-live backend redeploy; then Rob reprocess -> verify transcribed + memories extracted (+ Gate B separately).
+
+NOT done: no code applied, no deploy, no reprocess, no secret handled, no push, no TTS/face. Diff only.
