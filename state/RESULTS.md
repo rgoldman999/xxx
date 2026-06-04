@@ -599,3 +599,27 @@ OPEN/NOTE: 35-min file -> single _whisper.transcribe call on GPU; timeout 1800s 
 NEXT (ROB approval): "apply it" -> executor applies 3 edits, shows greps/diff, commits (backtogether), then confirm-before-live redeploy btg-stt (new route) THEN backend (new client). Then ROB reprocess a fresh video -> executor verifies transcribed + segments>0.
 
 NOT done: nothing applied, no deploy, no reprocess, no TTS/face, no push. Draft only.
+
+## 2026-06-04T02:41:20Z — Applied + committed HTTP transcribe fix (backtogether 0668e69). 3 files, all compile, bridge copies identical, WS path intact. Awaiting confirm-before-live: btg-stt then backend.
+Rob approved "apply it". Applied the 3 drafted edits, verified, committed. No deploy yet.
+
+APPLIED + VERIFIED:
+- bridge/services/stt.py + ops/cerebrium/stt/services/stt.py (snapshot): added POST /api/stt/transcribe (Depends require_bridge_auth) + _transcribe_file_blocking; imports Request/Depends + require_bridge_auth. Both copies BYTE-IDENTICAL (diff clean).
+- backend/app/services/clients/stt_bridge.py: transcribe_file rewritten to httpx POST /api/stt/transcribe, params={language}, content=<wav bytes>, X-Bridge-Auth header, timeout=1800, raise_for_status. WS streaming pump removed from this fn only.
+- py_compile: ALL 3 OK. git status: only these 3 files. Realtime WS path INTACT (@router.websocket("/stream") line 245; client open_stream line 177 untouched).
+- Commit: backtogether main 0668e69, tree clean, NOT pushed (commit only).
+
+NEXT (ROB-ONLY confirm-before-live, IN ORDER):
+1. Redeploy btg-stt FIRST (new /api/stt/transcribe route must exist before client calls it).
+   - cmd: cd ops/cerebrium/stt && cerebrium deploy --config-file ./cerebrium.toml (logged bg)
+   - smoke: /healthz 200; POST /api/stt/transcribe with a tiny wav + X-Bridge-Auth -> 200 JSON {text,...} (NOT 404). Dashboard Runs should show POST /api/stt/transcribe 200 (or a real transcribe result), NOT GET 404.
+2. THEN redeploy backend (client now posts to /api/stt/transcribe).
+   - smoke: /api/health 200.
+3. After both live: Rob reprocess a fresh video [ROB-ONLY] -> executor verifies read-only: audio_extracted -> transcribed, source_speaker_segments>0, dashboard /api/stt/transcribe POST 200, transcript_text populated.
+   - If transcribe 200 but downstream still off, diagnose from there (no blind retry).
+
+RISK NOTES (honest):
+- The POST route's reachability is the real test — HTTP POST should proxy fine (unlike WS), but it is UNVERIFIED until btg-stt redeploys and we probe it. If POST /api/stt/transcribe ALSO 404s, that would be a deeper gateway issue (but /healthz GET works, so HTTP routing works — expected to succeed).
+- 35-min file: single _whisper.transcribe call, client timeout 1800s. If it exceeds, raise timeout or chunk (not now).
+
+NOT done: no deploy, no reprocess, no push, no TTS/face. Stopped for confirm-before-live (btg-stt first, then backend).
