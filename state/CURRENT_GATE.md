@@ -3,34 +3,34 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Objective
-Diagnose why the first r2:// video failed at the diarize/STT step (empty error). Get the actual exception (Rob log/inspect), then fix and re-verify. STT still not validated end-to-end.
+Confirm the exact STT-step exception for source 294c44ea, then fix and re-verify STT end-to-end. Diagnosis (read-only) done; leading hypothesis = WS timeout/cold-start on a 35-min file. Needs the exception TYPE from logs to confirm.
 
 ## Done / verified
-- STT bridge READY; backend rev 00025; R2 WORKING (uploads -> r2://).
-- NEW video 294c44ea (persona 14578822) reprocessed: storage_uri r2://, extracted audio OK (audio_duration 2085.94s) -> then FAILED at diarize/STT, error_message EMPTY. (RESULTS 01:20Z) This is the furthest any video has gotten; the failure is now at the STT step itself.
+- STT bridge READY; backend rev 00025; R2 WORKING.
+- 294c44ea: r2:// source, audio extracted (2085s), failed at diarize/STT, error_message EMPTY.
+- Diagnosis (RESULTS 01:26Z): two red herrings ELIMINATED in source —
+  (1) env_stt_bridge_url_present=false is misleading: _inspect checks legacy STT_BRIDGE_URL/BRIDGE_URL; the client reads stt_service_url=STT_SERVICE_URL (set+verified). Bridge URL IS configured.
+  (2) r2:// audio is NOT passed to STT; processing.py passes a LOCAL .wav. transcribe_file got a real local file.
+- Empty error explained: handler sets error_message=str(e)[:500]; str(e) is empty -> messageless exception (timeout/cancel/connection-close).
+- LEADING HYPOTHESIS: STT WS call failed messagelessly; btg-stt is scale-to-zero, so reprocess WS connect likely raced GPU cold-start (open_timeout ~15s vs container spin-up + whisper load ~9s), OR long-file (35-min) timeout. NOT confirmed (exception type only in logs).
 
-## Blocker — STT-step failure, cause unknown read-only
-- btg-stt + backend logs not retrievable (cerebrium logs flaky this session).
-- Richer per-source detail is owner-authed (/_inspect). DB shows the failure but not the exception.
+## Next step — ROB-ONLY: confirm the exception type
+1. Rob: dashboard btg-stt App Logs AND backtogether-backend App Logs ~01:15-01:16 -> the exact exception at the WS call (timeout / connection refused / cold-start / mid-stream disconnect). Report the exception type + message.
+   (cerebrium CLI logs are flaky/empty this session, so dashboard logs are the reliable source.)
 
-## Next step — ROB-ONLY: surface the actual error (pick any)
-1. Rob: GET {backend_base}/api/upload/_inspect/294c44ea-9784-42eb-988a-701a11d7c448 (authed) -> report fields / error detail.
-2. Rob: dashboard App Logs (backtogether-backend) ~01:15-01:16 -> the diarize/STT exception; and btg-stt App Logs -> whether a /stream request arrived.
-   backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend
-3. Candidates to look for (NOT assumed): does the STT bridge fetch the r2:// audio itself (R2 access on the bridge?) or does the backend stream bytes to it; WS auth (bridge_auth) mismatch; transcribe_file timeout on a 35-min file; exception thrown before error_message is written.
-4. Once the error is known: executor diagnoses against source (processing.py / stt_bridge.py) read-only, proposes a fix; code change = AUTO-RUN draft + show-diff, deploy = confirm-before-live. NO blind retry of 294c44ea until cause known.
+## Then fix (per confirmed cause) — executor drafts, Rob approves deploy
+- If cold-start race: pre-warm btg-stt (min_replicas=1 temporarily = ROB-ONLY spend change) for the test, OR add WS connect retry / raise open_timeout in stt_bridge.py (AUTO-RUN draft + show-diff; confirm-before-live deploy).
+- If long-file timeout: raise per-file timeout or chunk audio (same gating).
+- Independent small fix: make transcribe_file attach a message (type name) so error_message is never blank (AUTO-RUN draft + show-diff).
 
 ## After STT validates
-- TTS bridge bring-up (voice_id / callable persona). New paid GPU infra = ROB-ONLY spend.
+- TTS bridge bring-up. New paid GPU infra = ROB-ONLY spend.
 
 ## ROB-ONLY (carried)
-- Authed _inspect call / dashboard logs; upload/reprocess; redeploy (confirm-before-live); TTS/face. No secret values read/set by executor.
+- Dashboard logs; min_replicas/spend change; upload/reprocess; redeploy (confirm-before-live); TTS/face. No secret values read/set by executor.
 
 ## Hard constraints
-No authed-call/upload/reprocess by executor. No prod DB writes by executor. No blind retry of 294c44ea or the file:// ellis sources. No redeploy without confirm-before-live. No TTS/face.
-
-## Note
-Console error Rob saw ("listener indicated async response... message channel closed") = browser-extension message, unrelated to backend/STT.
+No retry of 294c44ea until exception type known. No executor upload/authed-call/reprocess/deploy. No prod DB writes by executor. No TTS/face.
 
 ---
 
