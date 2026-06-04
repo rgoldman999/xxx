@@ -475,3 +475,26 @@ PROPOSED FIX (to DRAFT as show-diff; NOT applied; needs Rob approval + confirm-b
 ALTERNATIVE if path-depth fails: set btg-stt min_replicas=1 (always-on, ROB-ONLY spend ~$576/mo — exceeds $100 ceiling, so only as a SHORT test then revert) to test the scale-to-zero hypothesis; or escalate.
 
 NOT done: no code/toml change, no deploy, no retry, no upload/reprocess, no TTS/face. Decision + draft-approval needed.
+
+## 2026-06-04T02:08:15Z — Applied + committed /api/stt prefix fix (3 files, backtogether d30301e). Not deployed. Awaiting confirm-before-live for btg-stt then backend.
+Rob approved "apply it". Applied the 3 drafted edits exactly, verified, committed to backtogether repo. No deploy yet.
+
+APPLIED + VERIFIED (greps + full diff reviewed):
+- bridge/main_stt.py:82 (was 77): app.include_router(stt_svc.router, prefix="/api/stt") + explanatory comment.
+- ops/cerebrium/stt/main_stt.py:82 (deployed snapshot): SAME edit (identical diff).
+- backend/app/services/clients/stt_bridge.py _ws_url_from: all 3 return branches now build /api/stt/stream; docstring updated.
+- git status: ONLY these 3 files changed (no unrelated edits). 18 insertions / 6 deletions.
+- Net: ws route /stream -> /api/stt/stream. Bare @app.get("/healthz") (Cerebrium healthcheck) unchanged.
+
+COMMIT: backtogether repo, branch main, hash d30301e. tree clean. NOT pushed (push not in approved scope; commit only as instructed).
+
+SCOPE-CHECK NOTE (flagged, NOT acted on): TTS + avatar bridges already build NESTED ws paths — tts_bridge.py:91-94 -> /tts/stream; avatar_bridge.py:86-89 -> /avatar/stream. They are multi-segment already (though only one level deep, /tts/stream not /api/tts/stream). Whether one-level-deep is "nested enough" for the gateway is UNVERIFIED until the /api/stt/stream test proves the path-depth theory. Did not touch TTS/avatar (out of scope).
+
+NEXT (ROB-ONLY, confirm-before-live, SEPARATELY per the approval):
+1. Redeploy btg-stt (picks up snapshot prefix change). Smoke: /healthz 200; WS probe to /api/stt/stream -> dashboard Runs shows WS-close status (NOT GET 404).
+2. Redeploy backend (picks up client _ws_url_from change). Smoke: /api/health 200.
+   - Order matters: deploy btg-stt FIRST (new route exists), THEN backend (client points at new route). If backend deploys first it would call /api/stt/stream on an old btg-stt that still only has /stream -> 404; deploying stt first avoids a transient mismatch.
+3. After both live: real reprocess of a fresh video -> audio_extracted -> transcribed, source_speaker_segments>0, dashboard shows /api/stt/stream WS activity.
+4. If /api/stt/stream STILL 404: path-depth disproven -> test btg-stt min_replicas=1 (SHORT ROB-ONLY spend, then revert) or escalate.
+
+NOT done: no deploy, no push, no upload/reprocess/retry, no TTS/face. Stopped for confirm-before-live deploy approval (btg-stt first, then backend).
