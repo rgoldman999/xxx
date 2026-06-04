@@ -520,3 +520,30 @@ B. Escalate to Cerebrium support with the now-stronger evidence: WS works on our
 C. Both in parallel: A as the fast test while B runs.
 
 NOT done: backend NOT deployed, no reprocess, no min_replicas change, no push, no TTS/face. Stopped at the gate HALT.
+
+## 2026-06-04T02:28:09Z — Scale-to-zero hypothesis ALSO FALSIFIED: /api/stt/stream STILL GET 404 with min_replicas=1 (always-on). Reverted to min_replicas=0 (deployed). Both hypotheses dead -> Cerebrium escalation (plan C / leg B).
+Short bounded scale-to-zero test (Rob-approved). Set btg-stt min_replicas=1, redeployed, probed /api/stt/stream. STILL GET 404. Scale-to-zero is NOT the cause. Reverted to min_replicas=0 and redeployed (cost-stop honored). Escalate to Cerebrium.
+
+TEST (min_replicas=1, always-on, build-26a9af59):
+- /api/stt/stream -> dashboard Runs GET 404 at 19:20:42 (container 7c94ccf469-fwmhs, always-on replica). Same failure mode.
+=> scale-to-zero vs always-on is NOT the differentiator. Both my hypotheses (path-depth AND scale-to-zero) now FALSIFIED by real deploy tests.
+
+COST-STOP (honored):
+- Reverted toml min_replicas 1 -> 0; redeployed build-ce08b0a7 (live). toml back to committed baseline (git clean). Always-on window ~6 min (19:16->19:23), a few cents. btg-stt is scale-to-zero again. (Dashboard visual re-confirm was denied/declined; the binding control is the toml+deploy, which is done.)
+
+STATE OF HYPOTHESES — both dead:
+- Path-depth: FALSIFIED (/api/stt/stream 404 same as bare /stream).
+- Scale-to-zero: FALSIFIED (/api/stt/stream 404 even at min_replicas=1).
+- Router-vs-app mounting: already eliminated (backend uses @router+include_router and WS works).
+- Remaining unexplained difference between working backend WS and broken btg-stt WS: CPU (backend) vs GPU/ADA_L4 (btg-stt), and/or disable_auth=true on btg-stt (backend likely false), and/or some per-app gateway config. NOT TESTED — do not guess further; escalate.
+
+ESCALATION TO CEREBRIUM (plan C leg B — now the path) — evidence pack:
+- Same project p-a907d7c5, same FastAPI @router.websocket + app.include_router pattern.
+- WORKS: backend (CPU, min_replicas=1, disable_auth likely false) — /api/call/ws/{id} -> WS reaches container (Runs status 1006).
+- FAILS: btg-stt (GPU ADA_L4, tested at BOTH min_replicas=0 and =1, disable_auth=true) — /stream AND /api/stt/stream both -> "GET 404", upgrade routed as plain GET, never reaches container. /healthz GET 200 fine.
+- Question for Cerebrium: why does a wss:// upgrade to a custom-runtime app's @app.websocket route get routed/logged as a plain GET and 404'd to the container on btg-stt, while the same pattern works on our backend app? What app-level config enables WS upgrade proxying (e.g. does disable_auth, GPU runtime, or a specific runtime flag affect WS ingress)?
+- NEW SUSPECT worth Rob checking/asking: disable_auth=true on btg-stt vs the backend. If Cerebrium's WS upgrade proxying requires the default auth path (or a specific flag) that disable_auth bypasses, that would explain WS-on-backend vs WS-404-on-stt. UNVERIFIED — candidate question for Cerebrium AND a possible next cheap test (toggle disable_auth) if Rob wants.
+
+CODE STATE: /api/stt prefix fix still committed (d30301e), still ineffective alone; LEFT in place (harmless). toml reverted to min_replicas=0 (uncommitted net-zero; matches committed baseline).
+
+NOT done: backend NOT deployed, no reprocess/upload/retry, no TTS/face, no push. Always-on reverted. STT blocked pending Cerebrium answer (or a disable_auth test if Rob approves).
