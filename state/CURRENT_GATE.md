@@ -3,42 +3,37 @@
 > Process governed by state/HANDOFF-POLICY.md (approval-light: AUTO-RUN / CHECKPOINT / ROB-ONLY). Read it before acting.
 
 ## Status
-STT transcription VALIDATED end-to-end (HTTP /api/stt/transcribe; transcript 31,583 chars). Upload pipeline now has TWO separate downstream blockers, both characterized read-only (RESULTS 04:33Z). Neither is caused by the STT/HTTP work.
+STT VALIDATED (HTTP transcribe; 31,583 chars). Two downstream blockers. GATE A drafted (Qwen) — awaiting Rob "apply it". GATE B separate (diarization/pyannote/HF token) — not bundled.
 
 ================================================================
-## GATE A — persona extraction wrongly hardcoded to Anthropic (FATAL)
+## GATE A — persona extraction: Anthropic -> Qwen (DRAFTED, not applied)
 ================================================================
-### Finding
-- persona_builder.py hardcodes the Anthropic SDK (module-level client, model "claude-sonnet-4-20250514") and re-raises on API failure -> the 401 invalid-key fails the whole source at processing.py:301.
-- Rob: the app is NOT supposed to use Claude/Anthropic. So the fix is NOT to set an Anthropic key — it is to route extraction through the app's provider-agnostic client.
-- The app already has get_llm_client() (llm_client.py): .complete(**kwargs), OpenAI SDK shape, Qwen via LLM_PROVIDER=qwen (default OpenAI). conversation.py already uses it.
-### Proposed fix (DRAFT only; AUTO-RUN draftable + show-diff; deploy confirm-before-live)
-- Rewrite extract_persona_data to use get_llm_client().complete(...) (mirror conversation.py: run_in_executor + resp.choices[0].message.content). Remove anthropic import + hardcoded model + module-level client. Keep re-raise-on-API-fail / []-on-parse-fail semantics.
-### ROB DECISION needed
-- Which provider should persona extraction use: Qwen (LLM_PROVIDER=qwen, per stack decision #19) or OpenAI (llm_client default)? Code becomes provider-agnostic either way; this only sets the model id / provider env.
-- Then: "draft it" -> executor produces show-diff -> apply on approval -> confirm-before-live backend redeploy -> re-trigger reprocess.
+### Diff (RESULTS 04:36Z) — 1 file backend/app/services/persona_builder.py
+1. Imports: remove Anthropic SDK import + module-level Anthropic client; add `from app.services.llm_client import get_llm_client` + `import asyncio`.
+2. extract_persona_data: replace client.messages.create(claude-sonnet-4) with get_llm_client("qwen") + await loop.run_in_executor(None, lambda: llm.complete(model="gpt-4o-mini", max_tokens=4096, messages=[{system:EXTRACTION_PROMPT},{user}])). Forces Qwen; QwenLLM maps model id to served model; sync complete in executor (mirrors conversation.py).
+3. Read: response_text = (response.choices[0].message.content or "").strip().
+- UNCHANGED: EXTRACTION_PROMPT, JSON parsing, []-on-parse-fail, re-raise-on-API-fail.
+- No Anthropic anywhere; no ANTHROPIC credential; transcript_text preserved (committed at processing.py:228 before extraction); Gate B untouched.
+
+### Pre-deploy FLAG (must check before redeploy, name-only)
+- Backend needs QWEN_BASE_URL + QWEN_API_TOKEN present or QwenLLM raises/conn-fails (would trade Anthropic 401 for Qwen error). Qwen routing verified earlier (D-2) + btg-llm-qwen-4b deployed, but backend's qwen base_url/token presence NOT re-verified for this path.
+
+### Next — ROB DECISION
+- "apply it" -> executor applies 3 edits, shows greps + py_compile, commits backtogether. THEN name-only check QWEN_BASE_URL/QWEN_API_TOKEN present (AUTO-RUN). THEN confirm-before-live backend redeploy. THEN Rob reprocess -> verify source completes + PersonaMemory rows created.
 
 ================================================================
-## GATE B — diarization produced 0 speaker segments (SEPARATE, pre-existing)
+## GATE B — diarization 0 speaker segments (SEPARATE, not in Gate A)
 ================================================================
-### Finding
-- source_speaker_segments=0, speaker_embeddings=0, speech_speakers=0.
-- NOT caused by the HTTP change: diarize_and_transcribe ALWAYS returned speakers:{} by design (docstring); speaker data comes from a separate pyannote path: voice_clusterer / embed_source (processing.py:248).
-- So embed_source either genuinely found 0 speakers in this file OR raised non-fatally (processing.py:283-288 catches "[non-fatal] embed_source raised"). Job reached stage=clustered, so embedding ran and yielded 0.
-### Next (AUTO-RUN read-only)
-- Inspect whether embed_source logged a [non-fatal] error for 294c44ea (needs backend App Logs — flaky CLI, use dashboard) and whether pyannote/HF token (env_hf_token_present was false in _inspect) is required for embeddings. NOTE _inspect earlier showed env_hf_token_present=false -> pyannote diarization/embedding may need a HF token that is not set. STRONG candidate for why embeddings=0.
-- Determine if 0 speakers is expected (e.g. this file's audio) or a config gap (missing HF token for pyannote).
-### Likely sub-finding to verify
-- pyannote.audio speaker embeddings typically require a HuggingFace token (accept model terms). _inspect reported env_hf_token_present=false. If embed_source needs HF_TOKEN and it is unset, embeddings=0 is explained -> ROB sets HF token (secret, value never in chat) OR confirm embeddings are optional for STT validation.
-
-## Recommended order
-- GATE A first (fatal, blocks the job). GATE B can be investigated read-only in parallel; its fix (likely HF token) is independent.
+- source_speaker_segments=0 / speaker_embeddings=0. NOT caused by HTTP change (diarize_and_transcribe always returned speakers:{} by design). Real speaker data = pyannote embed_source (processing.py:248).
+- STRONG candidate: pyannote needs a HuggingFace token; _inspect showed env_hf_token_present=false. If embed_source needs HF_TOKEN and it's unset, embeddings=0 is explained.
+- Next (AUTO-RUN read-only, when Rob wants): confirm whether embed_source requires HF token + whether it logged a [non-fatal] error for 294c44ea (dashboard App Logs). Then ROB decision: set HF token (secret, value never in chat) OR make embeddings optional for STT validation.
+- Do NOT bundle into Gate A.
 
 ## ROB-ONLY (carried)
-- Provider decision (A); any secret value incl HF token (B); approve code change (show-diff); backend redeploy (confirm-before-live); reprocess; push; TTS/face. No secret values read/set by executor.
+- Approve Gate A apply (show-diff done); QWEN secrets presence is name-only check; backend redeploy (confirm-before-live); reprocess; HF token decision (B); push; TTS/face. No secret values read/set by executor. No Anthropic credential (Rob: not using Claude).
 
 ## Hard constraints
-No code change without show-diff + approval. No deploy without confirm-before-live. No reprocess/authed-call by executor. No secret values. No push unless asked. No TTS/face. Do NOT ask Rob for an Anthropic credential (Rob: not using Claude).
+No code applied without "apply it". No deploy without confirm-before-live. No reprocess/authed-call by executor. No secret values. No push unless asked. No TTS/face.
 
 ---
 
