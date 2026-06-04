@@ -662,3 +662,26 @@ NEXT (ROB-ONLY trigger, then AUTO-RUN verify):
 3. If transcribe 200 but diarization/segments off, diagnose from there (no blind retry).
 
 NOT done: no reprocess by executor (Rob's authed trigger), no secret handled, no push, no TTS/face. STT plumbing fully deployed; awaiting the validating reprocess.
+
+## 2026-06-04T04:22:32Z — Reprocess did NOT land: 294c44ea row untouched since 01:16, no new job enqueued, 0 sources processed since deploy. New HTTP path NOT exercised. NOT a STT result. (Bonus: old job_ledger error confirms the WS TimeoutError our fix targets.)
+Verified read-only: the reprocess Rob triggered did not take effect. The new HTTP transcribe path was never exercised. This is NOT an STT pass/fail — the trigger did not land. Did NOT reprocess (per instruction + it is Rob's authed trigger).
+
+EVIDENCE (read-only, db now 04:21Z):
+- source 294c44ea: status=failed, stage=audio_extracted, updated_at=01:16:00 — UNCHANGED since the original ~3h-old failure. reprocess_source resets row to pending + clears fields + commits BEFORE enqueue (upload.py:260-268); the row was NOT reset => the handler did not run to completion.
+- 0 sources updated in the last 30 min (since deploy ~04:08). No processing activity at all.
+- job_ledger: only ONE job for 294c44ea = f894f233 (the OLD attempt, claimed_by ...00025... at 01:15, status=failed). NO new redrive: job from this reprocess. (force_enqueue uses a unique redrive:<key>:<uuid>, so idempotency is NOT the blocker — there is simply no new job.)
+- btg-stt Runs + backend Runs: empty for the 8:20-9:20pm window; no _reprocess POST, no /api/stt/transcribe call logged.
+=> The authed POST /api/upload/_reprocess/294c44ea... did not reach/complete the handler. New HTTP code path untested.
+
+BONUS — old job f894f233 last_error CONFIRMS the diagnosis our fix targets:
+- TimeoutError traceback: processing.py:216 diarize_and_transcribe -> processing.py:71 stt_bridge.transcribe_file -> stt_bridge.py:275 open_stream -> stt_bridge.py:220 `await asyncio.wait_for(ws.recv(), timeout=10.0)` -> TimeoutError. 
+- This is the OLD (rev 00025, pre-HTTP-fix) WebSocket path timing out on the handshake (the WS 404 never returns a {event:ready}). Exactly the failure our HTTP rewrite replaces. Confirms (a) the root cause analysis was right, (b) the fix removes this exact call. (Note: the failing line is in the OLD code; the NEW transcribe_file no longer calls open_stream.)
+
+WHY THE REPROCESS LIKELY DID NOT LAND (Rob to check — request side, not visible to executor):
+- The authed POST may have returned non-2xx (401 auth / 404 path / error) — what did the response body/status say?
+- Possibly hit an old/wrong backend URL, or a typo in source id/path.
+- backend_base: https://api.aws.us-east-1.cerebrium.ai/v4/p-a907d7c5/backtogether-backend ; path: /api/upload/_reprocess/294c44ea-9784-42eb-988a-701a11d7c448 (POST, owner-authed).
+
+NEXT (ROB-ONLY): re-trigger the authed reprocess and report the HTTP response (status + body). A success returns {"status":"reset_and_enqueued","enqueued":true,"job_id":...}. Then executor re-verifies read-only (row -> pending -> transcribed, transcript_text, segments>0, btg-stt POST /api/stt/transcribe 200).
+
+NOT done: no reprocess by executor, no deploy, no upload, no secret handled, no push, no TTS/face. Per instruction: did not reprocess again.
