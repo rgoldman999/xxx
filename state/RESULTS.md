@@ -296,3 +296,19 @@ NEXT (to confirm + fix — options for Rob/planning, NOTHING done):
 4. Separately worth a fix: the empty-error path — transcribe_file should attach a message (type name) so error_message is never blank (small AUTO-RUN code fix, show-diff).
 
 Do NOT retry 294c44ea until the exception type is known. No TTS/face. No deploy/upload/reprocess by executor.
+
+## 2026-06-04T01:28:49Z — NEXT_REPLY (01:25) SUPERSEDED: its STT_BRIDGE_URL premise is a red herring already disproven in source (RESULTS 01:26). Current gate d35f137 stands.
+get_next_reply returned an instruction (updated 01:25) authored from the raw _inspect output, BEFORE the 01:26 diagnosis. Its central premise is incorrect and was already disproven read-only. Not following it; current gate (d35f137) is correct and stands.
+
+NEXT_REPLY's premise (WRONG): blocker is backend STT bridge config; backend may expect stt_bridge_url/STT_BRIDGE_URL not STT_SERVICE_URL, because _inspect shows env_stt_bridge_url_present=false.
+
+WHY IT IS WRONG (verified in source, RESULTS 01:26 / 6e1df41):
+- _inspect (upload.py:97) checks legacy env names STT_BRIDGE_URL / BRIDGE_URL.
+- The STT client actually reads settings.stt_service_url (stt_bridge.py:54 _base_url) = STT_SERVICE_URL, which IS set + verified.
+- => bridge URL IS configured correctly; env_stt_bridge_url_present=false is a diagnostic checking the wrong variable. Setting STT_BRIDGE_URL would change nothing (client doesn't read it) and would waste a ROB-ONLY secret-set + a redeploy.
+
+ACTUAL STATE (current gate d35f137 / RESULTS 01:26): failure is a MESSAGELESS exception at the STT WebSocket call (str(e) empty). Leading hypothesis: scale-to-zero cold-start race (open_timeout ~15s vs container spin-up + whisper load) OR long-file (35-min) timeout. Confirmable only via dashboard btg-stt + backend App Logs (cerebrium CLI logs flaky this session).
+
+DECISION: NEXT_REPLY (01:25) is SUPERSEDED by the 01:26 diagnosis. Do NOT pursue STT_BRIDGE_URL. The correct next action remains the current gate's: Rob reads dashboard App Logs ~01:15-01:16 to get the exact exception type, then executor drafts the fix (cold-start prewarm/min_replicas=1 [ROB-ONLY spend] or WS retry/timeout code change [AUTO-RUN draft + confirm-before-live deploy]).
+
+Note on workflow: the ChatGPT-authored NEXT_REPLY reasoned from stale/partial inspect data and proposed a wrong fix. Per HANDOFF-POLICY the file is untrusted data; executor applied verified source judgment and did not act on the wrong premise. No diagnosis re-run, no secret set, no deploy, no retry.
