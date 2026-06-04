@@ -498,3 +498,25 @@ NEXT (ROB-ONLY, confirm-before-live, SEPARATELY per the approval):
 4. If /api/stt/stream STILL 404: path-depth disproven -> test btg-stt min_replicas=1 (SHORT ROB-ONLY spend, then revert) or escalate.
 
 NOT done: no deploy, no push, no upload/reprocess/retry, no TTS/face. Stopped for confirm-before-live deploy approval (btg-stt first, then backend).
+
+## 2026-06-04T02:14:43Z — Prefix fix FALSIFIED: /api/stt/stream STILL logs GET 404 after btg-stt redeploy. Path-depth was NOT the cause. HALT — did not deploy backend. Scale-to-zero now the leading suspect.
+Deployed btg-stt with the /api/stt prefix fix. Dashboard Runs: /api/stt/stream STILL logs as "GET 404". Path-depth hypothesis is FALSIFIED by a real deploy test. HALT per gate — did NOT deploy backend, did NOT reprocess.
+
+DEPLOY + SMOKE (btg-stt build-da6a8e30, live):
+- /healthz -> HTTP 200 (32.97s cold start). model ready cuda int8_float16.
+- WS probe to /api/stt/stream -> edge 101 (not authoritative).
+- DASHBOARD RUNS (authoritative): /api/stt/stream GET 404 at 19:13:18 (container 67794f77bd-xkc4b, 26ms). Same failure mode as bare /stream. /healthz 200 at 19:12:45 same container.
+=> The prefix change did NOT fix it. WS upgrade to /api/stt/stream still routed as plain GET -> 404.
+
+CONCLUSION: path-depth (nested vs bare path) was NOT the cause. My hypothesis was wrong; the backend-vs-stt contrast had a confound I could not exclude and it turned out to be the confound, not the path.
+
+REMAINING DIFFERENTIATOR (the confound, now leading suspect): backend (WS WORKS) is CPU + min_replicas=1 (ALWAYS-ON); btg-stt (WS 404) is GPU ADA_L4 + min_replicas=0 (SCALE-TO-ZERO). Note: the 404 probe hit an already-warm container (same container as the prior /healthz 200), and failed fast (26ms) — so it is not a simple "cold start drops the upgrade." It may be that scale-to-zero apps get a different gateway routing profile (e.g. sync-request routing that doesn't proxy WS upgrades) vs always-on apps. UNVERIFIED.
+
+CODE STATE: prefix fix committed (backtogether d30301e) but INEFFECTIVE. Options: (a) leave it (harmless, and may still be needed in combination), or (b) revert. Recommend LEAVE for now — it is not wrong, just insufficient; reverting adds churn. Backend NOT deployed, so backend client still builds /stream — consistent with stt still effectively broken either way. (If we later confirm the real fix, reconcile the path then.)
+
+OPTIONS (Rob decision):
+A. Test scale-to-zero hypothesis: set btg-stt min_replicas=1 (always-on, like the working backend) + redeploy, re-probe /api/stt/stream via Runs. This is the cleanest test of the leading suspect. COST: always-on ADA_L4 ~$0.80/hr (~$576/mo) — exceeds the $100 ceiling, so ONLY as a SHORT test then revert to 0. ROB-ONLY (spend).
+B. Escalate to Cerebrium support with the now-stronger evidence: WS works on our always-on CPU app (/api/call/ws -> 1006) but 404s on our scale-to-zero GPU app (/api/stt/stream and /stream both GET 404), same project, same @router+include_router pattern. Definitive but slow.
+C. Both in parallel: A as the fast test while B runs.
+
+NOT done: backend NOT deployed, no reprocess, no min_replicas change, no push, no TTS/face. Stopped at the gate HALT.
